@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,23 +17,22 @@ limitations under the License.
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 
-	"github.com/golang/glog"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog"
 	"k8s.io/kops/cmd/kops/util"
 	kopsapi "k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/commands"
 	"k8s.io/kops/pkg/kopscodecs"
+	"k8s.io/kops/util/pkg/text"
 	"k8s.io/kops/util/pkg/vfs"
-	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/kubectl/genericclioptions/resource"
 	"k8s.io/kubernetes/pkg/kubectl/util/i18n"
+	"k8s.io/kubernetes/pkg/kubectl/util/templates"
 )
 
 var (
@@ -46,7 +45,7 @@ var (
 
 		# Replace an instancegroup using YAML passed into stdin.
 		cat instancegroup.yaml | kops replace -f -
-		
+
 		# Note, if the resource does not exist the command will error, use --force to provision resource
 		kops replace -f my-cluster.yaml --force
 		`))
@@ -56,8 +55,8 @@ var (
 
 // replaceOptions is the options for the command
 type replaceOptions struct {
-	// FilenameOptions is a list of files containing resources
-	resource.FilenameOptions
+	// Filenames is a list of files containing resources
+	Filenames []string
 	// create any resources not found - we limit to instance groups only for now
 	force bool
 }
@@ -72,7 +71,7 @@ func NewCmdReplace(f *util.Factory, out io.Writer) *cobra.Command {
 		Long:    replaceLong,
 		Example: replaceExample,
 		Run: func(cmd *cobra.Command, args []string) {
-			if cmdutil.IsFilenameSliceEmpty(options.Filenames) {
+			if len(options.Filenames) == 0 {
 				cmd.Help()
 				return
 			}
@@ -94,11 +93,6 @@ func RunReplace(f *util.Factory, cmd *cobra.Command, out io.Writer, c *replaceOp
 		return err
 	}
 
-	// Codecs provides access to encoding and decoding for the scheme
-	codecs := kopscodecs.Codecs //serializer.NewCodecFactory(scheme)
-
-	codec := codecs.UniversalDecoder(kopsapi.SchemeGroupVersion)
-
 	for _, f := range c.Filenames {
 		var contents []byte
 		if f == "-" {
@@ -112,10 +106,10 @@ func RunReplace(f *util.Factory, cmd *cobra.Command, out io.Writer, c *replaceOp
 				return fmt.Errorf("error reading file %q: %v", f, err)
 			}
 		}
-		sections := bytes.Split(contents, []byte("\n---\n"))
+		sections := text.SplitContentToSections(contents)
 
 		for _, section := range sections {
-			o, gvk, err := codec.Decode(section, nil, nil)
+			o, gvk, err := kopscodecs.Decode(section, nil)
 			if err != nil {
 				return fmt.Errorf("error parsing file %q: %v", f, err)
 			}
@@ -182,7 +176,7 @@ func RunReplace(f *util.Factory, cmd *cobra.Command, out io.Writer, c *replaceOp
 				}
 				switch ig {
 				case nil:
-					glog.Infof("instanceGroup: %v was not found, creating resource now", igName)
+					klog.Infof("instanceGroup: %v was not found, creating resource now", igName)
 					_, err = clientset.InstanceGroupsFor(cluster).Create(v)
 					if err != nil {
 						return fmt.Errorf("error creating instanceGroup: %v", err)
@@ -218,7 +212,7 @@ func RunReplace(f *util.Factory, cmd *cobra.Command, out io.Writer, c *replaceOp
 					return fmt.Errorf("error replacing SSHCredential: %v", err)
 				}
 			default:
-				glog.V(2).Infof("Type of object was %T", v)
+				klog.V(2).Infof("Type of object was %T", v)
 				return fmt.Errorf("Unhandled kind %q in %q", gvk, f)
 			}
 		}

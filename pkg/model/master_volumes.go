@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/apis/kops/model"
 	"k8s.io/kops/upup/pkg/fi"
@@ -29,6 +29,7 @@ import (
 	"k8s.io/kops/upup/pkg/fi/cloudup/aliup"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awstasks"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
+	"k8s.io/kops/upup/pkg/fi/cloudup/do"
 	"k8s.io/kops/upup/pkg/fi/cloudup/dotasks"
 	"k8s.io/kops/upup/pkg/fi/cloudup/gce"
 	"k8s.io/kops/upup/pkg/fi/cloudup/gcetasks"
@@ -103,7 +104,7 @@ func (b *MasterVolumeBuilder) Build(c *fi.ModelBuilderContext) error {
 			case kops.CloudProviderVSphere:
 				b.addVSphereVolume(c, name, volumeSize, zone, etcd, m, allMembers)
 			case kops.CloudProviderBareMetal:
-				glog.Fatalf("BareMetal not implemented")
+				klog.Fatalf("BareMetal not implemented")
 			case kops.CloudProviderOpenstack:
 				err = b.addOpenstackVolume(c, name, volumeSize, zone, etcd, m, allMembers)
 				if err != nil {
@@ -177,18 +178,26 @@ func (b *MasterVolumeBuilder) addAWSVolume(c *fi.ModelBuilderContext, name strin
 
 func (b *MasterVolumeBuilder) addDOVolume(c *fi.ModelBuilderContext, name string, volumeSize int32, zone string, etcd *kops.EtcdClusterSpec, m *kops.EtcdMemberSpec, allMembers []string) {
 	// required that names start with a lower case and only contains letters, numbers and hyphens
-	name = "kops-" + strings.Replace(name, ".", "-", -1)
+	name = "kops-" + do.SafeClusterName(name)
 
 	// DO has a 64 character limit for volume names
 	if len(name) >= 64 {
 		name = name[:64]
 	}
 
+	tags := make(map[string]string)
+	tags[do.TagNameEtcdClusterPrefix+etcd.Name] = do.SafeClusterName(m.Name)
+	tags[do.TagKubernetesClusterIndex] = do.SafeClusterName(m.Name)
+
+	// We always add an owned tags (these can't be shared)
+	tags[do.TagKubernetesClusterNamePrefix] = do.SafeClusterName(b.Cluster.ObjectMeta.Name)
+
 	t := &dotasks.Volume{
 		Name:      s(name),
 		Lifecycle: b.Lifecycle,
 		SizeGB:    fi.Int64(int64(volumeSize)),
 		Region:    s(zone),
+		Tags:      tags,
 	}
 
 	c.AddTask(t)
@@ -262,6 +271,10 @@ func (b *MasterVolumeBuilder) addOpenstackVolume(c *fi.ModelBuilderContext, name
 	// This says "only mount on a master"
 	tags[openstack.TagNameRolePrefix+"master"] = "1"
 
+	// override zone
+	if b.Cluster.Spec.CloudConfig.Openstack.BlockStorage != nil && b.Cluster.Spec.CloudConfig.Openstack.BlockStorage.OverrideAZ != nil {
+		zone = fi.StringValue(b.Cluster.Spec.CloudConfig.Openstack.BlockStorage.OverrideAZ)
+	}
 	t := &openstacktasks.Volume{
 		Name:             s(name),
 		AvailabilityZone: s(zone),

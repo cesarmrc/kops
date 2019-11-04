@@ -26,7 +26,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/route53"
-	"github.com/golang/glog"
+	"k8s.io/klog"
 	kopsroot "k8s.io/kops"
 	"k8s.io/kops/cloudmock/aws/mockautoscaling"
 	"k8s.io/kops/cloudmock/aws/mockec2"
@@ -88,7 +88,7 @@ func NewIntegrationTestHarness(t *testing.T) *IntegrationTestHarness {
 func (h *IntegrationTestHarness) Close() {
 	if h.TempDir != "" {
 		if os.Getenv("KEEP_TEMP_DIR") != "" {
-			glog.Infof("NOT removing temp directory, because KEEP_TEMP_DIR is set: %s", h.TempDir)
+			klog.Infof("NOT removing temp directory, because KEEP_TEMP_DIR is set: %s", h.TempDir)
 		} else {
 			err := os.RemoveAll(h.TempDir)
 			if err != nil {
@@ -163,6 +163,14 @@ func (h *IntegrationTestHarness) SetupMockAWS() *awsup.MockAWSCloud {
 		CreationDate:   aws.String("2017-01-09T17:08:27.000Z"),
 		ImageId:        aws.String("ami-15000000"),
 		Name:           aws.String("k8s-1.5-debian-jessie-amd64-hvm-ebs-2017-01-09"),
+		OwnerId:        aws.String(awsup.WellKnownAccountKopeio),
+		RootDeviceName: aws.String("/dev/xvda"),
+	})
+
+	mockEC2.Images = append(mockEC2.Images, &ec2.Image{
+		CreationDate:   aws.String("2019-08-06T00:00:00.000Z"),
+		ImageId:        aws.String("ami-11400000"),
+		Name:           aws.String("k8s-1.14-debian-stretch-amd64-hvm-ebs-2019-08-16"),
 		OwnerId:        aws.String(awsup.WellKnownAccountKopeio),
 		RootDeviceName: aws.String("/dev/xvda"),
 	})

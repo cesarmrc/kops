@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ type NetworkingSpec struct {
 	AmazonVPC  *AmazonVPCNetworkingSpec  `json:"amazonvpc,omitempty"`
 	Cilium     *CiliumNetworkingSpec     `json:"cilium,omitempty"`
 	LyftVPC    *LyftVPCNetworkingSpec    `json:"lyftvpc,omitempty"`
+	GCE        *GCENetworkingSpec        `json:"gce,omitempty"`
 }
 
 // ClassicNetworkingSpec is the specification of classic networking mode, integrated into kubernetes
@@ -60,15 +61,18 @@ type KopeioNetworkingSpec struct {
 
 // WeaveNetworkingSpec declares that we want Weave networking
 type WeaveNetworkingSpec struct {
-	MTU         *int32 `json:"mtu,omitempty"`
-	ConnLimit   *int32 `json:"connLimit,omitempty"`
-	NoMasqLocal *int32 `json:"noMasqLocal,omitempty"`
+	MTU          *int32 `json:"mtu,omitempty"`
+	ConnLimit    *int32 `json:"connLimit,omitempty"`
+	NoMasqLocal  *int32 `json:"noMasqLocal,omitempty"`
+	NetExtraArgs string `json:"netExtraArgs,omitempty"`
 }
 
 // FlannelNetworkingSpec declares that we want Flannel networking
 type FlannelNetworkingSpec struct {
 	// Backend is the backend overlay type we want to use (vxlan or udp)
 	Backend string `json:"backend,omitempty"`
+	// IptablesResyncSeconds sets resync period for iptables rules, in seconds
+	IptablesResyncSeconds *int32 `json:"iptablesResyncSeconds,omitempty"`
 }
 
 // CalicoNetworkingSpec declares that we want Calico networking
@@ -90,6 +94,16 @@ type CalicoNetworkingSpec struct {
 	PrometheusProcessMetricsEnabled bool `json:"prometheusProcessMetricsEnabled,omitempty"`
 	// MajorVersion is the version of Calico to use
 	MajorVersion string `json:"majorVersion,omitempty"`
+	// IPIPMode is mode for CALICO_IPV4POOL_IPIP
+	IPIPMode string `json:"ipipMode,omitempty"`
+	// TyphaPrometheusMetricsEnabled enables Prometheus metrics collection from Typha
+	// (default: false)
+	TyphaPrometheusMetricsEnabled bool `json:"typhaPrometheusMetricsEnabled,omitempty"`
+	// TyphaPrometheusMetricsPort is the TCP port the typha Prometheus metrics server
+	// should bind to (default: 9093)
+	TyphaPrometheusMetricsPort int32 `json:"typhaPrometheusMetricsPort,omitempty"`
+	// TyphaReplicas is the number of replicas of Typha to deploy
+	TyphaReplicas int32 `json:"typhaReplicas,omitempty"`
 }
 
 // CanalNetworkingSpec declares that we want Canal networking
@@ -102,9 +116,14 @@ type CanalNetworkingSpec struct {
 	// for traffic between pod to host after calico rules have been processed.
 	// Default: ACCEPT (other options: DROP, RETURN)
 	DefaultEndpointToHostAction string `json:"defaultEndpointToHostAction,omitempty"`
+	// DisableFlannelForwardRules configures Flannel to NOT add the
+	// default ACCEPT traffic rules to the iptables FORWARD chain
+	DisableFlannelForwardRules bool `json:"disableFlannelForwardRules,omitempty"`
 	// LogSeveritySys the severity to set for logs which are sent to syslog
 	// Default: INFO (other options: DEBUG, WARNING, ERROR, CRITICAL, NONE)
 	LogSeveritySys string `json:"logSeveritySys,omitempty"`
+	// MTU to be set in the cni-network-config (default: 1500)
+	MTU *int32 `json:"mtu,omitempty"`
 	// PrometheusGoMetricsEnabled enables Prometheus Go runtime metrics collection
 	PrometheusGoMetricsEnabled bool `json:"prometheusGoMetricsEnabled,omitempty"`
 	// PrometheusMetricsEnabled can be set to enable the experimental Prometheus
@@ -132,7 +151,7 @@ type RomanaNetworkingSpec struct {
 // AmazonVPCNetworkingSpec declares that we want Amazon VPC CNI networking
 type AmazonVPCNetworkingSpec struct {
 	// The container image name to use, which by default is:
-	// 602401143452.dkr.ecr.us-west-2.amazonaws.com/amazon-k8s-cni:1.0.0
+	// 602401143452.dkr.ecr.us-west-2.amazonaws.com/amazon-k8s-cni:v1.5.4
 	ImageName string `json:"imageName,omitempty"`
 }
 
@@ -187,9 +206,34 @@ type CiliumNetworkingSpec struct {
 	StateDir                 string            `json:"stateDir,omitempty"`
 	TracePayloadLen          int               `json:"tracePayloadlen,omitempty"`
 	Tunnel                   string            `json:"tunnel,omitempty"`
+
+	EnableIpv6             bool   `json:"enableipv6"`
+	EnableIpv4             bool   `json:"enableipv4"`
+	MonitorAggregation     string `json:"monitorAggregation"`
+	BPFCTGlobalTCPMax      int    `json:"bpfCTGlobalTCPMax"`
+	BPFCTGlobalAnyMax      int    `json:"bpfCTGlobalAnyMax"`
+	PreallocateBPFMaps     bool   `json:"preallocateBPFMaps"`
+	SidecarIstioProxyImage string `json:"sidecarIstioProxyImage"`
+	ClusterName            string `json:"clusterName"`
+	ToFqdnsEnablePoller    bool   `json:"toFqdnsEnablePoller"`
+	ContainerRuntimeLabels string `json:"containerRuntimeLabels,omitempty"`
+	IPTablesRulesNoinstall bool   `json:"IPTablesRulesNoinstall"`
+	AutoDirectNodeRoutes   bool   `json:"autoDirectNodeRoutes"`
+	EnableNodePort         bool   `json:"enableNodePort"`
+
+	//node init options
+	RemoveCbrBridge       bool   `json:"removeCbrBridge"`
+	RestartPods           bool   `json:"restartPods"`
+	ReconfigureKubelet    bool   `json:"reconfigureKubelet"`
+	NodeInitBootstrapFile string `json:"nodeInitBootstrapFile"`
+	CniBinPath            string `json:"cniBinPath"`
 }
 
 // LyftIpVlanNetworkingSpec declares that we want to use the cni-ipvlan-vpc-k8s CNI networking
 type LyftVPCNetworkingSpec struct {
 	SubnetTags map[string]string `json:"subnetTags,omitempty"`
+}
+
+// GCENetworkingSpec is the specification of GCE's native networking mode, using IP aliases
+type GCENetworkingSpec struct {
 }

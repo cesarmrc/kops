@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -50,6 +50,14 @@ func (b *SysctlBuilder) Build(c *fi.ModelBuilderContext) error {
 		sysctls = append(sysctls,
 			"kernel.softlockup_panic = 1",
 			"kernel.softlockup_all_cpu_backtrace = 1",
+			"")
+
+		// See https://github.com/kubernetes/kops/issues/6342
+		portRange := b.Cluster.Spec.KubeAPIServer.ServiceNodePortRange
+		if portRange == "" {
+			portRange = "30000-32767" // Default kube-apiserver ServiceNodePortRange
+		}
+		sysctls = append(sysctls, "net.ipv4.ip_local_reserved_ports = "+portRange,
 			"")
 
 		// See https://github.com/kubernetes/kube-deploy/issues/261

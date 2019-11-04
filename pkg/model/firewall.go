@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ import (
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awstasks"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 type Protocol int
@@ -145,7 +145,7 @@ func (b *FirewallModelBuilder) applyNodeToMasterAllowSpecificPorts(c *fi.ModelBu
 			case "vxlan":
 				udpPorts = append(udpPorts, 8472)
 			default:
-				glog.Warningf("unknown flannel networking backend %q", b.Cluster.Spec.Networking.Flannel.Backend)
+				klog.Warningf("unknown flannel networking backend %q", b.Cluster.Spec.Networking.Flannel.Backend)
 			}
 		}
 
@@ -153,7 +153,7 @@ func (b *FirewallModelBuilder) applyNodeToMasterAllowSpecificPorts(c *fi.ModelBu
 			// Calico needs to access etcd
 			// TODO: Remove, replace with etcd in calico manifest
 			// https://coreos.com/etcd/docs/latest/v2/configuration.html
-			glog.Warningf("Opening etcd port on masters for access from the nodes, for calico.  This is unsafe in untrusted environments.")
+			klog.Warningf("Opening etcd port on masters for access from the nodes, for calico.  This is unsafe in untrusted environments.")
 			tcpPorts = append(tcpPorts, 4001)
 			tcpPorts = append(tcpPorts, 179)
 			protocols = append(protocols, ProtocolIPIP)
@@ -161,14 +161,14 @@ func (b *FirewallModelBuilder) applyNodeToMasterAllowSpecificPorts(c *fi.ModelBu
 
 		if b.Cluster.Spec.Networking.Romana != nil {
 			// Romana needs to access etcd
-			glog.Warningf("Opening etcd port on masters for access from the nodes, for romana.  This is unsafe in untrusted environments.")
+			klog.Warningf("Opening etcd port on masters for access from the nodes, for romana.  This is unsafe in untrusted environments.")
 			tcpPorts = append(tcpPorts, 4001)
 			tcpPorts = append(tcpPorts, 9600)
 		}
 
 		if b.Cluster.Spec.Networking.Cilium != nil {
 			// Cilium needs to access etcd
-			glog.Warningf("Opening etcd port on masters for access from the nodes, for Cilium.  This is unsafe in untrusted environments.")
+			klog.Warningf("Opening etcd port on masters for access from the nodes, for Cilium.  This is unsafe in untrusted environments.")
 			tcpPorts = append(tcpPorts, 4001)
 		}
 
@@ -208,7 +208,7 @@ func (b *FirewallModelBuilder) applyNodeToMasterAllowSpecificPorts(c *fi.ModelBu
 		case ProtocolIPIP:
 			name = "ipip"
 		default:
-			glog.Warningf("unknown protocol %q - naming by number", awsName)
+			klog.Warningf("unknown protocol %q - naming by number", awsName)
 		}
 
 		t := &awstasks.SecurityGroupRule{
@@ -247,21 +247,14 @@ func (b *FirewallModelBuilder) applyNodeToMasterBlockSpecificPorts(c *fi.ModelBu
 	if b.Cluster.Spec.Networking.Calico != nil {
 		// Calico needs to access etcd
 		// TODO: Remove, replace with etcd in calico manifest
-		glog.Warningf("Opening etcd port on masters for access from the nodes, for calico.  This is unsafe in untrusted environments.")
+		klog.Warningf("Opening etcd port on masters for access from the nodes, for calico.  This is unsafe in untrusted environments.")
 		tcpBlocked[4001] = false
 		protocols = append(protocols, ProtocolIPIP)
 	}
 
 	if b.Cluster.Spec.Networking.Romana != nil {
 		// Romana needs to access etcd
-		glog.Warningf("Opening etcd port on masters for access from the nodes, for romana.  This is unsafe in untrusted environments.")
-		tcpBlocked[4001] = false
-		protocols = append(protocols, ProtocolIPIP)
-	}
-
-	if b.Cluster.Spec.Networking.Cilium != nil {
-		// Cilium needs to access etcd
-		glog.Warningf("Opening etcd port on masters for access from the nodes, for Cilium.  This is unsafe in untrusted environments.")
+		klog.Warningf("Opening etcd port on masters for access from the nodes, for romana.  This is unsafe in untrusted environments.")
 		tcpBlocked[4001] = false
 		protocols = append(protocols, ProtocolIPIP)
 	}
@@ -319,7 +312,7 @@ func (b *FirewallModelBuilder) applyNodeToMasterBlockSpecificPorts(c *fi.ModelBu
 				case ProtocolIPIP:
 					name = "ipip"
 				default:
-					glog.Warningf("unknown protocol %q - naming by number", awsName)
+					klog.Warningf("unknown protocol %q - naming by number", awsName)
 				}
 
 				t := &awstasks.SecurityGroupRule{
@@ -483,8 +476,9 @@ func (b *KopsModelContext) GetSecurityGroups(role kops.InstanceGroupRole) ([]Sec
 		}
 		done[name] = true
 
+		sgName := fmt.Sprintf("%v-%v", fi.StringValue(ig.Spec.SecurityGroupOverride), role)
 		t := &awstasks.SecurityGroup{
-			Name:        ig.Spec.SecurityGroupOverride,
+			Name:        &sgName,
 			ID:          ig.Spec.SecurityGroupOverride,
 			VPC:         b.LinkToVPC(),
 			Shared:      fi.Bool(true),

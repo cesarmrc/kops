@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@ import (
 	"bytes"
 	"strings"
 
-	"github.com/golang/glog"
 	"github.com/sergi/go-diff/diffmatchpatch"
+	"k8s.io/klog"
 )
 
 func FormatDiff(lString, rString string) string {
@@ -154,7 +154,7 @@ func buildDiffLines(lString, rString string) []lineRecord {
 			}
 
 		default:
-			glog.Fatalf("unexpected dmp type: %v", diff.Type)
+			klog.Fatalf("unexpected dmp type: %v", diff.Type)
 		}
 	}
 

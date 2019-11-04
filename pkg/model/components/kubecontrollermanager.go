@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/golang/glog"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/apis/kops/util"
 	"k8s.io/kops/upup/pkg/fi"
@@ -71,19 +71,19 @@ func (b *KubeControllerManagerOptionsBuilder) BuildOptions(o interface{}) error 
 
 	// if 1.4.8+ and 1.5.2+
 	if (kubernetesVersion.GTE(*k8sv148) && kubernetesVersion.Minor == 4) || kubernetesVersion.GTE(*k8sv152) {
-		glog.V(4).Infof("Kubernetes version %q supports AttachDetachReconcileSyncPeriod; will configure", kubernetesVersion)
+		klog.V(4).Infof("Kubernetes version %q supports AttachDetachReconcileSyncPeriod; will configure", kubernetesVersion)
 		// If not set ... or set to 0s ... which is stupid
 		if kcm.AttachDetachReconcileSyncPeriod == nil ||
 			kcm.AttachDetachReconcileSyncPeriod.Duration.String() == "0s" {
 
-			glog.V(8).Infof("AttachDetachReconcileSyncPeriod is not set; will set to default %v", defaultAttachDetachReconcileSyncPeriod)
+			klog.V(8).Infof("AttachDetachReconcileSyncPeriod is not set; will set to default %v", defaultAttachDetachReconcileSyncPeriod)
 			kcm.AttachDetachReconcileSyncPeriod = &metav1.Duration{Duration: defaultAttachDetachReconcileSyncPeriod}
 
 			// If less than 1 min and greater than 1 sec ... you get a warning
 		} else if kcm.AttachDetachReconcileSyncPeriod.Duration < defaultAttachDetachReconcileSyncPeriod &&
 			kcm.AttachDetachReconcileSyncPeriod.Duration > time.Second {
 
-			glog.Infof("KubeControllerManager AttachDetachReconcileSyncPeriod is set lower than recommended: %s", defaultAttachDetachReconcileSyncPeriod)
+			klog.Infof("KubeControllerManager AttachDetachReconcileSyncPeriod is set lower than recommended: %s", defaultAttachDetachReconcileSyncPeriod)
 
 			// If less than 1sec you get an error.  Controller is coded to not allow configuration
 			// less than one second.
@@ -91,7 +91,7 @@ func (b *KubeControllerManagerOptionsBuilder) BuildOptions(o interface{}) error 
 			return fmt.Errorf("AttachDetachReconcileSyncPeriod cannot be set to less than 1 second")
 		}
 	} else {
-		glog.V(4).Infof("not setting AttachDetachReconcileSyncPeriod, k8s version is too low")
+		klog.V(4).Infof("not setting AttachDetachReconcileSyncPeriod, k8s version is too low")
 		kcm.AttachDetachReconcileSyncPeriod = nil
 	}
 
@@ -116,6 +116,9 @@ func (b *KubeControllerManagerOptionsBuilder) BuildOptions(o interface{}) error 
 	case kops.CloudProviderOpenstack:
 		kcm.CloudProvider = "openstack"
 
+	case kops.CloudProviderALI:
+		kcm.CloudProvider = "alicloud"
+
 	default:
 		return fmt.Errorf("unknown cloudprovider %q", clusterSpec.CloudProvider)
 	}
@@ -133,7 +136,7 @@ func (b *KubeControllerManagerOptionsBuilder) BuildOptions(o interface{}) error 
 
 	kcm.LogLevel = 2
 
-	image, err := Image("kube-controller-manager", clusterSpec, b.Context.AssetBuilder)
+	image, err := Image("kube-controller-manager", b.Context.Architecture(), clusterSpec, b.Context.AssetBuilder)
 	if err != nil {
 		return err
 	}
@@ -150,6 +153,13 @@ func (b *KubeControllerManagerOptionsBuilder) BuildOptions(o interface{}) error 
 		kcm.ConfigureCloudRoutes = fi.Bool(true)
 	} else if networking.Kubenet != nil {
 		kcm.ConfigureCloudRoutes = fi.Bool(true)
+	} else if networking.GCE != nil {
+		kcm.ConfigureCloudRoutes = fi.Bool(false)
+		kcm.CIDRAllocatorType = fi.String("CloudAllocator")
+
+		if kcm.ClusterCIDR == "" {
+			kcm.ClusterCIDR = clusterSpec.PodCIDR
+		}
 	} else if networking.External != nil {
 		kcm.ConfigureCloudRoutes = fi.Bool(false)
 	} else if networking.CNI != nil || networking.Weave != nil || networking.Flannel != nil || networking.Calico != nil || networking.Canal != nil || networking.Kuberouter != nil || networking.Romana != nil || networking.AmazonVPC != nil || networking.Cilium != nil || networking.LyftVPC != nil {

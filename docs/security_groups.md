@@ -14,7 +14,7 @@ This is due to the lifecycle overrides being used to prevent creation of the Sec
 To do this first specify the Security Groups for the ELB (if you are using a LB) and Instance Groups
 Example:
 ```yaml
-apiVersion: kops/v1alpha2
+apiVersion: kops.k8s.io/v1alpha2
 kind: Cluster
 metadata:
   creationTimestamp: "2016-12-10T22:42:27Z"
@@ -28,7 +28,7 @@ spec:
 .
 .
 
-apiVersion: kops/v1alpha2
+apiVersion: kops.k8s.io/v1alpha2
 kind: InstanceGroup
 metadata:
   creationTimestamp: "2017-01-01T00:00:00Z"
@@ -46,7 +46,7 @@ Now run a cluster update to create the new launch configuration, using [lifecycl
 kops update cluster ${CLUSTER_NAME} --yes --lifecycle-overrides SecurityGroup=ExistsAndWarnIfChanges,SecurityGroupRule=ExistsAndWarnIfChanges
 ```
 
-*Everytime `kops update cluster` is ran, it must include the above `--lifecycle-overrides`.*
+*Every time `kops update cluster` is ran, it must include the above `--lifecycle-overrides`.*
 
 Then perform a rolling update in order to replace EC2 instances in the ASG with the new launch configuration:
 

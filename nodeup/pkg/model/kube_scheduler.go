@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package model
 
 import (
 	"fmt"
+	"strconv"
 
 	"k8s.io/kops/pkg/flagbuilder"
 	"k8s.io/kops/pkg/k8scodecs"
@@ -25,8 +26,9 @@ import (
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/nodeup/nodetasks"
 	"k8s.io/kops/util/pkg/exec"
+	"k8s.io/kops/util/pkg/proxy"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -53,7 +55,7 @@ func (b *KubeSchedulerBuilder) Build(c *fi.ModelBuilderContext) error {
 
 		manifest, err := k8scodecs.ToVersionedYaml(pod)
 		if err != nil {
-			return fmt.Errorf("error marshalling pod to yaml: %v", err)
+			return fmt.Errorf("error marshaling pod to yaml: %v", err)
 		}
 
 		c.AddTask(&nodetasks.File{
@@ -125,11 +127,7 @@ func (b *KubeSchedulerBuilder) buildPod() (*v1.Pod, error) {
 	container := &v1.Container{
 		Name:  "kube-scheduler",
 		Image: c.Image,
-		Command: exec.WithTee(
-			"/usr/local/bin/kube-scheduler",
-			sortedStrings(flags),
-			"/var/log/kube-scheduler.log"),
-		Env: getProxyEnvVars(b.Cluster.Spec.EgressProxy),
+		Env:   proxy.GetProxyEnvVars(b.Cluster.Spec.EgressProxy),
 		LivenessProbe: &v1.Probe{
 			Handler: v1.Handler{
 				HTTPGet: &v1.HTTPGetAction{
@@ -148,11 +146,37 @@ func (b *KubeSchedulerBuilder) buildPod() (*v1.Pod, error) {
 		},
 	}
 	addHostPathMapping(pod, container, "varlibkubescheduler", "/var/lib/kube-scheduler")
+
+	// Log both to docker and to the logfile
 	addHostPathMapping(pod, container, "logfile", "/var/log/kube-scheduler.log").ReadOnly = false
+	if b.IsKubernetesGTE("1.15") {
+		// From k8s 1.15, we use lighter containers that don't include shells
+		// But they have richer logging support via klog
+		container.Command = []string{"/usr/local/bin/kube-scheduler"}
+		container.Args = append(
+			sortedStrings(flags),
+			"--logtostderr=false", //https://github.com/kubernetes/klog/issues/60
+			"--alsologtostderr",
+			"--log-file=/var/log/kube-scheduler.log")
+	} else {
+		container.Command = exec.WithTee(
+			"/usr/local/bin/kube-scheduler",
+			sortedStrings(flags),
+			"/var/log/kube-scheduler.log")
+	}
+
+	if c.MaxPersistentVolumes != nil {
+		maxPDV := v1.EnvVar{
+			Name:  "KUBE_MAX_PD_VOLS", // https://kubernetes.io/docs/concepts/storage/storage-limits/
+			Value: strconv.Itoa(int(*c.MaxPersistentVolumes)),
+		}
+		container.Env = append(container.Env, maxPDV)
+	}
 
 	pod.Spec.Containers = append(pod.Spec.Containers, *container)
 
 	kubemanifest.MarkPodAsCritical(pod)
+	kubemanifest.MarkPodAsClusterCritical(pod)
 
 	return pod, nil
 }

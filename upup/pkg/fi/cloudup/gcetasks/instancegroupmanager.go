@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -106,7 +106,7 @@ func (_ *InstanceGroupManager) RenderGCE(t *gce.GCEAPITarget, a, e, changes *Ins
 
 	if a == nil {
 		if i.TargetSize == 0 {
-			// TargetSize 0 will normally be omitted by the marshalling code; we need to force it
+			// TargetSize 0 will normally be omitted by the marshaling code; we need to force it
 			i.ForceSendFields = append(i.ForceSendFields, "TargetSize")
 		}
 		op, err := t.Cloud.Compute().InstanceGroupManagers.Insert(t.Cloud.Project(), *e.Zone, i).Do()

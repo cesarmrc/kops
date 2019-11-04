@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -36,9 +36,9 @@ import (
 	"k8s.io/kops/pkg/kopscodecs"
 	"k8s.io/kops/pkg/try"
 	"k8s.io/kops/upup/pkg/fi/cloudup"
-	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	util_editor "k8s.io/kubernetes/pkg/kubectl/cmd/util/editor"
 	"k8s.io/kubernetes/pkg/kubectl/util/i18n"
+	"k8s.io/kubernetes/pkg/kubectl/util/templates"
 )
 
 type EditClusterOptions struct {
@@ -167,7 +167,7 @@ func RunEditCluster(f *util.Factory, cmd *cobra.Command, args []string, out io.W
 			return nil
 		}
 
-		newObj, _, err := kopscodecs.ParseVersionedYaml(edited)
+		newObj, _, err := kopscodecs.Decode(edited, nil)
 		if err != nil {
 			return preservedFile(fmt.Errorf("error parsing config: %s", err), file, out)
 		}

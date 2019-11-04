@@ -30,15 +30,15 @@ en alpha, y otras plataformas planeadas.
 
 ## Lanzando un anfitrión de Kubernetes cluster en AWS o GCE
 
-Para reproducir exactamente el demo anterior, visualizalo en el [tutorial](/docs/aws.md) para
+Para reproducir exactamente el demo anterior, visualizalo en el [tutorial](/docs/getting_started/aws.md) para
 lanzar un anfitrión de Kubernetes cluster en AWS.
 
-Para instalar un Kubernetes cluster en GCE por fabor siga esta [guide](/docs/tutorial/gce.md).
+Para instalar un Kubernetes cluster en GCE por fabor siga esta [guide](/docs/getting_started/gce.md).
 
 
 ## Caracteristicas
 
-* Automatiza el aprovisionamiento de Kubernetes clusters en [AWS](/docs/aws.md) y [GCE](/docs/tutorial/gce.md)
+* Automatiza el aprovisionamiento de Kubernetes clusters en [AWS](/docs/getting_started/aws.md) y [GCE](/docs/getting_started/gce.md)
 * Un Despliegue Altamente Disponible (HA) Kubernetes Masters
 * Construye en un modelo de estado sincronizado para **dry-runs** y **idempotency** automático
 * Capacidad de generar [Terraform](/docs/terraform.md)
@@ -162,8 +162,7 @@ __Pull Requests__
 * Descargue, compile y ejecute el código y asegúrese de que las pruebas pasen (make test).
   - También verifique que la nueva característica parezca cuerda, siga los mejores patrones arquitectónicos e incluya pruebas.
 
-Este repositorio usa los bots de Kubernetes.  Visualize una lista completa de los comandos [here](
-https://github.com/kubernetes/test-infra/blob/master/commands.md).
+Este repositorio usa los bots de Kubernetes.  Hay una lista completa de los comandos [aqui](https://go.k8s.io/bot-commands).
 
 
 ## Horas de Oficina

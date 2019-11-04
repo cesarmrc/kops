@@ -145,6 +145,12 @@ resource "aws_autoscaling_group" "bastion-privateflannel-example-com" {
     propagate_at_launch = true
   }
 
+  tag = {
+    key                 = "kops.k8s.io/instancegroup"
+    value               = "bastion"
+    propagate_at_launch = true
+  }
+
   metrics_granularity = "1Minute"
   enabled_metrics     = ["GroupDesiredCapacity", "GroupInServiceInstances", "GroupMaxSize", "GroupMinSize", "GroupPendingInstances", "GroupStandbyInstances", "GroupTerminatingInstances", "GroupTotalInstances"]
 }
@@ -174,6 +180,12 @@ resource "aws_autoscaling_group" "master-us-test-1a-masters-privateflannel-examp
     propagate_at_launch = true
   }
 
+  tag = {
+    key                 = "kops.k8s.io/instancegroup"
+    value               = "master-us-test-1a"
+    propagate_at_launch = true
+  }
+
   metrics_granularity = "1Minute"
   enabled_metrics     = ["GroupDesiredCapacity", "GroupInServiceInstances", "GroupMaxSize", "GroupMinSize", "GroupPendingInstances", "GroupStandbyInstances", "GroupTerminatingInstances", "GroupTotalInstances"]
 }
@@ -200,6 +212,12 @@ resource "aws_autoscaling_group" "nodes-privateflannel-example-com" {
   tag = {
     key                 = "k8s.io/role/node"
     value               = "1"
+    propagate_at_launch = true
+  }
+
+  tag = {
+    key                 = "kops.k8s.io/instancegroup"
+    value               = "nodes"
     propagate_at_launch = true
   }
 
@@ -268,11 +286,13 @@ resource "aws_elb" "api-privateflannel-example-com" {
     timeout             = 5
   }
 
-  idle_timeout = 300
+  cross_zone_load_balancing = false
+  idle_timeout              = 300
 
   tags = {
-    KubernetesCluster = "privateflannel.example.com"
-    Name              = "api.privateflannel.example.com"
+    KubernetesCluster                                  = "privateflannel.example.com"
+    Name                                               = "api.privateflannel.example.com"
+    "kubernetes.io/cluster/privateflannel.example.com" = "owned"
   }
 }
 
@@ -300,8 +320,9 @@ resource "aws_elb" "bastion-privateflannel-example-com" {
   idle_timeout = 300
 
   tags = {
-    KubernetesCluster = "privateflannel.example.com"
-    Name              = "bastion.privateflannel.example.com"
+    KubernetesCluster                                  = "privateflannel.example.com"
+    Name                                               = "bastion.privateflannel.example.com"
+    "kubernetes.io/cluster/privateflannel.example.com" = "owned"
   }
 }
 
@@ -657,6 +678,15 @@ resource "aws_security_group_rule" "https-elb-to-master" {
   from_port                = 443
   to_port                  = 443
   protocol                 = "tcp"
+}
+
+resource "aws_security_group_rule" "icmp-pmtu-api-elb-0-0-0-0--0" {
+  type              = "ingress"
+  security_group_id = "${aws_security_group.api-elb-privateflannel-example-com.id}"
+  from_port         = 3
+  to_port           = 4
+  protocol          = "icmp"
+  cidr_blocks       = ["0.0.0.0/0"]
 }
 
 resource "aws_security_group_rule" "master-egress" {

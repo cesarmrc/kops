@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,19 +19,19 @@ package try
 import (
 	"os"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 // RemoveFile will try to os.Remove the file, logging an error if it fails
 func RemoveFile(fp string) {
 	if err := os.Remove(fp); err != nil {
-		glog.Warningf("unable to remove file %s: %v", fp, err)
+		klog.Warningf("unable to remove file %s: %v", fp, err)
 	}
 }
 
 // CloseFile will try to call close on the file, logging an error if it fails
 func CloseFile(f *os.File) {
 	if err := f.Close(); err != nil {
-		glog.Warningf("unable to close file %s: %v", f.Name(), err)
+		klog.Warningf("unable to close file %s: %v", f.Name(), err)
 	}
 }

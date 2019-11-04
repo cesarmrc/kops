@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -34,9 +34,9 @@ type FakeInstanceGroups struct {
 	ns   string
 }
 
-var instancegroupsResource = schema.GroupVersionResource{Group: "kops", Version: "", Resource: "instancegroups"}
+var instancegroupsResource = schema.GroupVersionResource{Group: "kops.k8s.io", Version: "", Resource: "instancegroups"}
 
-var instancegroupsKind = schema.GroupVersionKind{Group: "kops", Version: "", Kind: "InstanceGroup"}
+var instancegroupsKind = schema.GroupVersionKind{Group: "kops.k8s.io", Version: "", Kind: "InstanceGroup"}
 
 // Get takes name of the instanceGroup, and returns the corresponding instanceGroup object, and an error if there is any.
 func (c *FakeInstanceGroups) Get(name string, options v1.GetOptions) (result *kops.InstanceGroup, err error) {
@@ -119,7 +119,7 @@ func (c *FakeInstanceGroups) DeleteCollection(options *v1.DeleteOptions, listOpt
 // Patch applies the patch and returns the patched instanceGroup.
 func (c *FakeInstanceGroups) Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *kops.InstanceGroup, err error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceAction(instancegroupsResource, c.ns, name, data, subresources...), &kops.InstanceGroup{})
+		Invokes(testing.NewPatchSubresourceAction(instancegroupsResource, c.ns, name, pt, data, subresources...), &kops.InstanceGroup{})
 
 	if obj == nil {
 		return nil, err

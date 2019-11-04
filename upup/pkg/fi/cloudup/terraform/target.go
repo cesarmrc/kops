@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/golang/glog"
 	hcl_parser "github.com/hashicorp/hcl/json/parser"
+	"k8s.io/klog"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/upup/pkg/fi"
 )
@@ -274,7 +274,7 @@ func (t *TerraformTarget) Finish(taskMap map[string]fi.Task) error {
 
 	jsonBytes, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
-		return fmt.Errorf("error marshalling terraform data to json: %v", err)
+		return fmt.Errorf("error marshaling terraform data to json: %v", err)
 	}
 
 	useJson := false
@@ -309,7 +309,7 @@ func (t *TerraformTarget) Finish(taskMap map[string]fi.Task) error {
 		}
 	}
 
-	glog.Infof("Terraform output is in %s", t.outDir)
+	klog.Infof("Terraform output is in %s", t.outDir)
 
 	return nil
 }

@@ -7,9 +7,9 @@ Create a Kubernetes cluster.
 
 ### Synopsis
 
-Create a kubernetes cluster using command line flags. This command creates cloud based resources such as networks and virtual machines. Once the infrastructure is in place Kubernetes is installed on the virtual machines. 
+Create a kubernetes cluster using command line flags. This command creates cloud based resources such as networks and virtual machines. Once the infrastructure is in place Kubernetes is installed on the virtual machines.
 
-These operations are done in parallel and rely on eventual consistency.
+ These operations are done in parallel and rely on eventual consistency.
 
 ```
 kops create cluster [flags]
@@ -71,13 +71,14 @@ kops create cluster [flags]
       --authorization string             Authorization mode to use: AlwaysAllow or RBAC (default "RBAC")
       --bastion                          Pass the --bastion flag to enable a bastion instance group. Only applies to private topology.
       --channel string                   Channel for default versions and configuration to use (default "stable")
-      --cloud string                     Cloud provider to use - gce, aws, vsphere
-      --cloud-labels string              A list of KV pairs used to tag all instance groups in AWS (eg "Owner=John Doe,Team=Some Team").
+      --cloud string                     Cloud provider to use - gce, aws, vsphere, openstack
+      --cloud-labels string              A list of KV pairs used to tag all instance groups in AWS (e.g. "Owner=John Doe,Team=Some Team").
       --disable-subnet-tags              Set to disable automatic subnet tagging
       --dns string                       DNS hosted zone to use: public|private. (default "Public")
       --dns-zone string                  DNS hosted zone to use (defaults to longest matching zone)
       --dry-run                          If true, only print the object that would be sent, without sending it. This flag can be used to create a cluster YAML or JSON manifest.
       --encrypt-etcd-storage             Generate key in aws kms and use it for encrypt etcd volumes
+      --etcd-storage-type string         The default storage type for etc members
   -h, --help                             help for cluster
       --image string                     Image to use for all instances.
       --kubernetes-version string        Version of kubernetes to run (defaults to version in channel)
@@ -90,12 +91,19 @@ kops create cluster [flags]
       --master-zones strings             Zones in which to run masters (must be an odd number)
       --model string                     Models to apply (separate multiple models with commas) (default "proto,cloudup")
       --network-cidr string              Set to override the default network CIDR
-      --networking string                Networking mode to use.  kubenet (default), classic, external, kopeio-vxlan (or kopeio), weave, flannel-vxlan (or flannel), flannel-udp, calico, canal, kube-router, romana, amazon-vpc-routed-eni, cilium. (default "kubenet")
+      --networking string                Networking mode to use.  kubenet (default), classic, external, kopeio-vxlan (or kopeio), weave, flannel-vxlan (or flannel), flannel-udp, calico, canal, kube-router, romana, amazon-vpc-routed-eni, cilium, cni. (default "kubenet")
       --node-count int32                 Set the number of nodes
       --node-security-groups strings     Add precreated additional security groups to nodes.
       --node-size string                 Set instance size for nodes
       --node-tenancy string              The tenancy of the node group on AWS. Can be either default or dedicated.
       --node-volume-size int32           Set instance volume size (in GB) for nodes
+      --os-dns-servers string            comma separated list of DNS Servers which is used in network
+      --os-ext-net string                The name of the external network to use with the openstack router
+      --os-ext-subnet string             The name of the external floating subnet to use with the openstack router
+      --os-kubelet-ignore-az             If true kubernetes may attach volumes across availability zones
+      --os-lb-floating-subnet string     The name of the external subnet to use with the kubernetes api
+      --os-network string                The ID of the existing OpenStack network to use
+      --os-octavia                       If true octavia loadbalancer api will be used
       --out string                       Path to write any local output
   -o, --output string                    Output format. One of json|yaml. Used with the --dry-run flag.
       --project string                   Project to use (must be set on GCE)
@@ -117,11 +125,15 @@ kops create cluster [flags]
       --config string                    yaml config file (default is $HOME/.kops.yaml)
       --log_backtrace_at traceLocation   when logging hits line file:N, emit a stack trace (default :0)
       --log_dir string                   If non-empty, write log files in this directory
-      --logtostderr                      log to standard error instead of files (default false)
+      --log_file string                  If non-empty, use this log file
+      --log_file_max_size uint           Defines the maximum size a log file can grow to. Unit is megabytes. If the value is 0, the maximum file size is unlimited. (default 1800)
+      --logtostderr                      log to standard error instead of files (default true)
       --name string                      Name of cluster. Overrides KOPS_CLUSTER_NAME environment variable
+      --skip_headers                     If true, avoid header prefixes in the log messages
+      --skip_log_headers                 If true, avoid headers when opening log files
       --state string                     Location of state storage (kops 'config' file). Overrides KOPS_STATE_STORE environment variable
       --stderrthreshold severity         logs at or above this threshold go to stderr (default 2)
-  -v, --v Level                          log level for V logs
+  -v, --v Level                          number for the log level verbosity
       --vmodule moduleSpec               comma-separated list of pattern=N settings for file-filtered logging
 ```
 

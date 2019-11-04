@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,11 +20,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/model"
 	"k8s.io/kops/pkg/model/defaults"
 	"k8s.io/kops/pkg/model/iam"
+	nodeidentitygce "k8s.io/kops/pkg/nodeidentity/gce"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/gce"
 	"k8s.io/kops/upup/pkg/fi/cloudup/gcetasks"
@@ -80,8 +81,6 @@ func (b *AutoscalingGroupModelBuilder) Build(c *fi.ModelBuilderContext) error {
 				BootDiskSizeGB: i64(int64(volumeSize)),
 				BootDiskImage:  s(ig.Spec.Image),
 
-				CanIPForward: fi.Bool(true),
-
 				// TODO: Support preemptible nodes?
 				Preemptible: fi.Bool(false),
 
@@ -95,6 +94,7 @@ func (b *AutoscalingGroupModelBuilder) Build(c *fi.ModelBuilderContext) error {
 					"startup-script": startupScript,
 					//"config": resources/config.yaml $nodeset.Name
 					"cluster-name": fi.WrapResource(fi.NewStringResource(b.ClusterName())),
+					nodeidentitygce.MetadataKeyInstanceGroupName: fi.WrapResource(fi.NewStringResource(ig.Name)),
 				},
 			}
 
@@ -105,7 +105,7 @@ func (b *AutoscalingGroupModelBuilder) Build(c *fi.ModelBuilderContext) error {
 			if len(storagePaths) == 0 {
 				t.Scopes = append(t.Scopes, "storage-ro")
 			} else {
-				glog.Warningf("enabling storage-rw for etcd backups")
+				klog.Warningf("enabling storage-rw for etcd backups")
 				t.Scopes = append(t.Scopes, "storage-rw")
 			}
 
@@ -126,6 +126,17 @@ func (b *AutoscalingGroupModelBuilder) Build(c *fi.ModelBuilderContext) error {
 
 			case kops.InstanceGroupRoleNode:
 				t.Tags = append(t.Tags, b.GCETagForRole(kops.InstanceGroupRoleNode))
+			}
+
+			if gce.UsesIPAliases(b.Cluster) {
+				t.CanIPForward = fi.Bool(false)
+
+				t.AliasIPRanges = map[string]string{
+					b.NameForIPAliasRange("pods"): "/24",
+				}
+				t.Subnet = b.LinkToIPAliasSubnet()
+			} else {
+				t.CanIPForward = fi.Bool(true)
 			}
 
 			//labels, err := b.CloudTagsForInstanceGroup(ig)
@@ -159,7 +170,7 @@ func (b *AutoscalingGroupModelBuilder) Build(c *fi.ModelBuilderContext) error {
 		// 1) no support in terraform
 		// 2) we can't steer to specific zones AFAICT, only to all zones in the region
 
-		targetSizes := make([]int, len(zones), len(zones))
+		targetSizes := make([]int, len(zones))
 		totalSize := 0
 		for i := range zones {
 			targetSizes[i] = minSize / len(zones)

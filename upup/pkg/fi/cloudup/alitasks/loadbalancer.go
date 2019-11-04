@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import (
 
 	"github.com/denverdino/aliyungo/common"
 	"github.com/denverdino/aliyungo/slb"
-	"github.com/golang/glog"
+	"k8s.io/klog"
 
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/aliup"
@@ -68,10 +68,10 @@ func (l *LoadBalancer) Find(c *fi.Context) (*LoadBalancer, error) {
 		return nil, nil
 	}
 	if len(responseLoadBalancers) > 1 {
-		glog.V(4).Infof("The number of specified loadbalancer with the same name exceeds 1, loadbalancerName:%q", *l.Name)
+		klog.V(4).Infof("The number of specified loadbalancer with the same name exceeds 1, loadbalancerName:%q", *l.Name)
 	}
 
-	glog.V(2).Infof("found matching LoadBalancer: %q", *l.Name)
+	klog.V(2).Infof("found matching LoadBalancer: %q", *l.Name)
 
 	actual := &LoadBalancer{}
 	actual.Name = fi.String(responseLoadBalancers[0].LoadBalancerName)
@@ -122,7 +122,7 @@ func (l *LoadBalancer) FindIPAddress(context *fi.Context) (*string, error) {
 		return nil, nil
 	}
 	if len(responseLoadBalancers) > 1 {
-		glog.V(4).Infof("The number of specified loadbalancer with the same name exceeds 1, loadbalancerName:%q", *l.Name)
+		klog.V(4).Infof("The number of specified loadbalancer with the same name exceeds 1, loadbalancerName:%q", *l.Name)
 	}
 
 	address := responseLoadBalancers[0].Address
@@ -159,7 +159,7 @@ func (_ *LoadBalancer) CheckChanges(a, e, changes *LoadBalancer) error {
 //LoadBalancer can only modify tags.
 func (_ *LoadBalancer) RenderALI(t *aliup.ALIAPITarget, a, e, changes *LoadBalancer) error {
 	if a == nil {
-		glog.V(2).Infof("Creating LoadBalancer with Name:%q", fi.StringValue(e.Name))
+		klog.V(2).Infof("Creating LoadBalancer with Name:%q", fi.StringValue(e.Name))
 
 		createLoadBalancerArgs := &slb.CreateLoadBalancerArgs{
 			RegionId:         common.Region(t.Cloud.Region()),
@@ -188,7 +188,7 @@ func (_ *LoadBalancer) RenderALI(t *aliup.ALIAPITarget, a, e, changes *LoadBalan
 	}
 
 	if a != nil && (len(a.Tags) > 0) {
-		glog.V(2).Infof("Modifying LoadBalancer with Name:%q, update LoadBalancer tags", fi.StringValue(e.Name))
+		klog.V(2).Infof("Modifying LoadBalancer with Name:%q, update LoadBalancer tags", fi.StringValue(e.Name))
 
 		tagsToDelete := e.getLoadBalancerTagsToDelete(a.Tags)
 		if len(tagsToDelete) > 0 {
@@ -207,7 +207,7 @@ func (_ *LoadBalancer) RenderALI(t *aliup.ALIAPITarget, a, e, changes *LoadBalan
 	return nil
 }
 
-// getDiskTagsToDelete loops through the currently set tags and builds a list of tags to be deleted from the specificated disk
+// getDiskTagsToDelete loops through the currently set tags and builds a list of tags to be deleted from the specified disk
 func (l *LoadBalancer) getLoadBalancerTagsToDelete(currentTags map[string]string) map[string]string {
 	tagsToDelete := map[string]string{}
 	for k, v := range currentTags {

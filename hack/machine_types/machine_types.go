@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/pricing"
-	"github.com/golang/glog"
+	"k8s.io/klog"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
 )
 
@@ -41,7 +41,6 @@ func main() {
 	flag.StringVar(&outputPath, "out", outputPath, "file to write")
 
 	flag.Parse()
-	flag.Lookup("logtostderr").Value.Set("true")
 
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -54,7 +53,7 @@ func run() error {
 		return fmt.Errorf("must specify output file with --out")
 	}
 
-	glog.Info("Beginning AWS Machine Refresh")
+	klog.Info("Beginning AWS Machine Refresh")
 
 	// Not currently in the API
 	t2CreditsPerHour := map[string]float32{
@@ -86,7 +85,11 @@ func run() error {
 	// Default to us-east-1
 	config = config.WithRegion("us-east-1")
 
-	svc := pricing.New(session.New(), config)
+	sess, err := session.NewSession()
+	if err != nil {
+		return err
+	}
+	svc := pricing.New(sess, config)
 	typeTerm := pricing.FilterTypeTermMatch
 	input := &pricing.GetProductsInput{
 		Filters: []*pricing.Filter{
@@ -141,9 +144,7 @@ func run() error {
 			}
 		}
 
-		for _, p := range result.PriceList {
-			prices = append(prices, p)
-		}
+		prices = append(prices, result.PriceList...)
 
 		if result.NextToken != nil {
 			input.NextToken = result.NextToken
@@ -176,13 +177,19 @@ func run() error {
 					Cores: stringToInt(attributes["vcpu"]),
 				}
 
-				memory := strings.TrimRight(attributes["memory"], " GiB")
+				memory := strings.TrimSuffix(attributes["memory"], " GiB")
 				machine.MemoryGB = stringToFloat32(memory)
 
 				if attributes["storage"] != "EBS only" {
 					storage := strings.Split(attributes["storage"], " ")
 					count := stringToInt(storage[0])
-					size := stringToInt(storage[2])
+					var size int
+					if storage[2] == "NVMe" {
+						count = 1
+						size = stringToInt(storage[0])
+					} else {
+						size = stringToInt(storage[2])
+					}
 
 					ephemeralDisks := []int{}
 					for i := 0; i < count; i++ {
@@ -303,7 +310,7 @@ func run() error {
 		output = output + "\n"
 	}
 
-	glog.Infof("Writing changes to %v", outputPath)
+	klog.Infof("Writing changes to %v", outputPath)
 
 	fileInput, err := ioutil.ReadFile(outputPath)
 	if err != nil {
@@ -341,8 +348,8 @@ func run() error {
 		return fmt.Errorf("error writing %s: %v", outputPath, err)
 	}
 
-	glog.Info("Done.")
-	glog.Flush()
+	klog.Info("Done.")
+	klog.Flush()
 
 	return nil
 }
@@ -352,7 +359,7 @@ func stringToFloat32(s string) float32 {
 	clean := strings.Replace(s, ",", "", -1)
 	value, err := strconv.ParseFloat(clean, 32)
 	if err != nil {
-		glog.Errorf("error converting string to float32: %v", err)
+		klog.Errorf("error converting string to float32: %v", err)
 	}
 	return float32(value)
 }
@@ -362,7 +369,7 @@ func stringToInt(s string) int {
 	clean := strings.Replace(s, ",", "", -1)
 	value, err := strconv.Atoi(clean)
 	if err != nil {
-		glog.Error(err)
+		klog.Error(err)
 	}
 	return value
 }

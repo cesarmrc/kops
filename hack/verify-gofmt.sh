@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Copyright 2016 The Kubernetes Authors.
+# Copyright 2019 The Kubernetes Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,9 +16,9 @@
 
 . $(dirname "${BASH_SOURCE}")/common.sh
 
-GOFMT="gofmt -s -w"
+GOFMT="bazel run //:gofmt -- -s -w"
 
-bad_files=$(git ls-files "*.go" | grep -v vendor | xargs -I {} $GOFMT -l {})
+bad_files=$(git ls-files "*.go" | grep -v vendor | xargs $GOFMT -l)
 if [[ -n "${bad_files}" ]]; then
   echo "FAIL: '$GOFMT' needs to be run on the following files: "
   echo "${bad_files}"

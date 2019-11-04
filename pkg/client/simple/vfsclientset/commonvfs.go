@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,12 +24,12 @@ import (
 	"sort"
 	"time"
 
-	"github.com/golang/glog"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/klog"
 	"k8s.io/kops/pkg/acls"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/apis/kops/v1alpha2"
@@ -44,7 +44,6 @@ type ValidationFunction func(o runtime.Object) error
 type commonVFS struct {
 	kind               string
 	basePath           vfs.Path
-	decoder            runtime.Decoder
 	encoder            runtime.Encoder
 	defaultReadVersion *schema.GroupVersionKind
 	validate           ValidationFunction
@@ -54,10 +53,9 @@ func (c *commonVFS) init(kind string, basePath vfs.Path, storeVersion runtime.Gr
 	codecs := kopscodecs.Codecs
 	yaml, ok := runtime.SerializerInfoForMediaType(codecs.SupportedMediaTypes(), "application/yaml")
 	if !ok {
-		glog.Fatalf("no YAML serializer registered")
+		klog.Fatalf("no YAML serializer registered")
 	}
 	c.encoder = codecs.EncoderForVersion(yaml.Serializer, storeVersion)
-	c.decoder = codecs.DecoderToVersion(yaml.Serializer, kops.SchemeGroupVersion)
 
 	c.kind = kind
 	c.basePath = basePath
@@ -126,7 +124,7 @@ func (c *commonVFS) readConfig(configPath vfs.Path) (runtime.Object, error) {
 		return nil, fmt.Errorf("error reading %s: %v", configPath, err)
 	}
 
-	object, _, err := c.decoder.Decode(data, c.defaultReadVersion, nil)
+	object, _, err := kopscodecs.Decode(data, c.defaultReadVersion)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing %s: %v", configPath, err)
 	}
@@ -136,7 +134,7 @@ func (c *commonVFS) readConfig(configPath vfs.Path) (runtime.Object, error) {
 func (c *commonVFS) writeConfig(cluster *kops.Cluster, configPath vfs.Path, o runtime.Object, writeOptions ...vfs.WriteOption) error {
 	data, err := c.serialize(o)
 	if err != nil {
-		return fmt.Errorf("error marshalling object: %v", err)
+		return fmt.Errorf("error marshaling object: %v", err)
 	}
 
 	create := false
@@ -170,7 +168,7 @@ func (c *commonVFS) writeConfig(cluster *kops.Cluster, configPath vfs.Path, o ru
 	}
 	if err != nil {
 		if create && os.IsExist(err) {
-			glog.Warningf("failed to create file as already exists: %v", configPath)
+			klog.Warningf("failed to create file as already exists: %v", configPath)
 			return err
 		}
 		return fmt.Errorf("error writing configuration file %s: %v", configPath, err)

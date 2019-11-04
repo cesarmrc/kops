@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,12 +18,13 @@ package components
 
 import (
 	"fmt"
+	"strings"
 
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/upup/pkg/fi/loader"
 )
 
-const DefaultBackupImage = "kopeio/etcd-backup:1.0.20180220"
+const DefaultBackupImage = "kopeio/etcd-backup:3.0.20191025"
 
 // EtcdOptionsBuilder adds options for etcd to the model
 type EtcdOptionsBuilder struct {
@@ -39,6 +40,8 @@ const (
 	DefaultEtcd3Version_1_11 = "3.2.24"
 
 	DefaultEtcd3Version_1_13 = "3.2.24"
+
+	DefaultEtcd3Version_1_14 = "3.3.10"
 )
 
 // BuildOptions is responsible for filling in the defaults for the etcd cluster model
@@ -59,7 +62,9 @@ func (b *EtcdOptionsBuilder) BuildOptions(o interface{}) error {
 		// Ensure the version is set
 		if c.Version == "" && c.Provider == kops.EtcdProviderTypeLegacy {
 			// Even if in legacy mode, etcd version 2 is unsupported as of k8s 1.13
-			if b.IsKubernetesGTE("1.13") {
+			if b.IsKubernetesGTE("1.14") {
+				c.Version = DefaultEtcd3Version_1_14
+			} else if b.IsKubernetesGTE("1.13") {
 				c.Version = DefaultEtcd3Version_1_13
 			} else {
 				c.Version = DefaultEtcd2Version
@@ -68,10 +73,37 @@ func (b *EtcdOptionsBuilder) BuildOptions(o interface{}) error {
 
 		if c.Version == "" && c.Provider == kops.EtcdProviderTypeManager {
 			// From 1.11, we run the k8s-recommended versions of etcd when using the manager
-			if b.IsKubernetesGTE("1.11") {
+			if b.IsKubernetesGTE("1.14") {
+				c.Version = DefaultEtcd3Version_1_14
+			} else if b.IsKubernetesGTE("1.13") {
+				c.Version = DefaultEtcd3Version_1_13
+			} else if b.IsKubernetesGTE("1.11") {
 				c.Version = DefaultEtcd3Version_1_11
 			} else {
 				c.Version = DefaultEtcd2Version
+			}
+		}
+
+		// From 1.12, we enable TLS if we're running EtcdManager & etcd3
+		//
+		// (Moving to etcd3 is a disruptive upgrade, so we
+		// force TLS at the same time as we enable
+		// etcd-manager by default).
+		if c.Provider == kops.EtcdProviderTypeManager {
+			etcdV3 := true
+			version := c.Version
+			version = strings.TrimPrefix(version, "v")
+			if strings.HasPrefix(version, "2.") {
+				etcdV3 = false
+			} else if strings.HasPrefix(version, "3.") {
+				etcdV3 = true
+			} else {
+				return fmt.Errorf("unexpected etcd version %q", c.Version)
+			}
+
+			if b.IsKubernetesGTE("1.12.0") && etcdV3 {
+				c.EnableEtcdTLS = true
+				c.EnableTLSAuth = true
 			}
 		}
 	}
@@ -104,7 +136,7 @@ func (b *EtcdOptionsBuilder) BuildOptions(o interface{}) error {
 			if c.Backups != nil {
 				image := c.Backups.Image
 				if image == "" {
-					image = fmt.Sprintf(DefaultBackupImage)
+					image = DefaultBackupImage
 				}
 
 				if image != "" {

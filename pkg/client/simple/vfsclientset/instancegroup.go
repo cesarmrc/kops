@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,13 +19,14 @@ package vfsclientset
 import (
 	"fmt"
 
-	"github.com/golang/glog"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/klog"
 	"k8s.io/kops/pkg/apis/kops"
 	api "k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/apis/kops/v1alpha1"
@@ -49,7 +50,7 @@ var _ InstanceGroupMirror = &InstanceGroupVFS{}
 
 func NewInstanceGroupMirror(cluster *kops.Cluster, configBase vfs.Path) InstanceGroupMirror {
 	if cluster == nil || cluster.Name == "" {
-		glog.Fatalf("cluster / cluster.Name is required")
+		klog.Fatalf("cluster / cluster.Name is required")
 	}
 
 	clusterName := cluster.Name
@@ -70,7 +71,7 @@ func NewInstanceGroupMirror(cluster *kops.Cluster, configBase vfs.Path) Instance
 
 func newInstanceGroupVFS(c *VFSClientset, cluster *kops.Cluster) *InstanceGroupVFS {
 	if cluster == nil || cluster.Name == "" {
-		glog.Fatalf("cluster / cluster.Name is required")
+		klog.Fatalf("cluster / cluster.Name is required")
 	}
 
 	clusterName := cluster.Name
@@ -138,7 +139,17 @@ func (c *InstanceGroupVFS) Create(g *api.InstanceGroup) (*api.InstanceGroup, err
 }
 
 func (c *InstanceGroupVFS) Update(g *api.InstanceGroup) (*api.InstanceGroup, error) {
-	err := c.update(c.cluster, g)
+
+	old, err := c.Get(g.Name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	if !apiequality.Semantic.DeepEqual(old.Spec, g.Spec) {
+		g.SetGeneration(old.GetGeneration() + 1)
+	}
+
+	err = c.update(c.cluster, g)
 	if err != nil {
 		return nil, err
 	}

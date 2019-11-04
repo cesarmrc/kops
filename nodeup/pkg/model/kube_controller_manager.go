@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,14 +21,16 @@ import (
 	"path/filepath"
 	"strings"
 
+	"k8s.io/kops/nodeup/pkg/distros"
 	"k8s.io/kops/pkg/flagbuilder"
 	"k8s.io/kops/pkg/k8scodecs"
 	"k8s.io/kops/pkg/kubemanifest"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/nodeup/nodetasks"
 	"k8s.io/kops/util/pkg/exec"
+	"k8s.io/kops/util/pkg/proxy"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -63,7 +65,7 @@ func (b *KubeControllerManagerBuilder) Build(c *fi.ModelBuilderContext) error {
 
 		manifest, err := k8scodecs.ToVersionedYaml(pod)
 		if err != nil {
-			return fmt.Errorf("error marshalling pod to yaml: %v", err)
+			return fmt.Errorf("error marshaling pod to yaml: %v", err)
 		}
 
 		c.AddTask(&nodetasks.File{
@@ -151,14 +153,31 @@ func (b *KubeControllerManagerBuilder) buildPod() (*v1.Pod, error) {
 		},
 	}
 
+	volumePluginDir := b.Cluster.Spec.Kubelet.VolumePluginDirectory
+
+	// Ensure the Volume Plugin dir is mounted on the same path as the host machine so DaemonSet deployment is possible
+	if volumePluginDir == "" {
+		switch b.Distribution {
+		case distros.DistributionContainerOS:
+			// Default is different on ContainerOS, see https://github.com/kubernetes/kubernetes/pull/58171
+			volumePluginDir = "/home/kubernetes/flexvolume/"
+
+		case distros.DistributionCoreOS:
+			// The /usr directory is read-only for CoreOS
+			volumePluginDir = "/var/lib/kubelet/volumeplugins/"
+
+		default:
+			volumePluginDir = "/usr/libexec/kubernetes/kubelet-plugins/volume/exec/"
+		}
+	}
+
+	// Add the volumePluginDir flag if provided in the kubelet spec, or set above based on the OS
+	flags = append(flags, "--flex-volume-plugin-dir="+volumePluginDir)
+
 	container := &v1.Container{
 		Name:  "kube-controller-manager",
 		Image: b.Cluster.Spec.KubeControllerManager.Image,
-		Command: exec.WithTee(
-			"/usr/local/bin/kube-controller-manager",
-			sortedStrings(flags),
-			"/var/log/kube-controller-manager.log"),
-		Env: getProxyEnvVars(b.Cluster.Spec.EgressProxy),
+		Env:   proxy.GetProxyEnvVars(b.Cluster.Spec.EgressProxy),
 		LivenessProbe: &v1.Probe{
 			Handler: v1.Handler{
 				HTTPGet: &v1.HTTPGetAction{
@@ -177,6 +196,24 @@ func (b *KubeControllerManagerBuilder) buildPod() (*v1.Pod, error) {
 		},
 	}
 
+	// Log both to docker and to the logfile
+	addHostPathMapping(pod, container, "logfile", "/var/log/kube-controller-manager.log").ReadOnly = false
+	if b.IsKubernetesGTE("1.15") {
+		// From k8s 1.15, we use lighter containers that don't include shells
+		// But they have richer logging support via klog
+		container.Command = []string{"/usr/local/bin/kube-controller-manager"}
+		container.Args = append(
+			sortedStrings(flags),
+			"--logtostderr=false", //https://github.com/kubernetes/klog/issues/60
+			"--alsologtostderr",
+			"--log-file=/var/log/kube-controller-manager.log")
+	} else {
+		container.Command = exec.WithTee(
+			"/usr/local/bin/kube-controller-manager",
+			sortedStrings(flags),
+			"/var/log/kube-controller-manager.log")
+	}
+
 	for _, path := range b.SSLHostPaths() {
 		name := strings.Replace(path, "/", "", -1)
 		addHostPathMapping(pod, container, name, path)
@@ -192,12 +229,14 @@ func (b *KubeControllerManagerBuilder) buildPod() (*v1.Pod, error) {
 		addHostPathMapping(pod, container, "srvkube", pathSrvKubernetes)
 	}
 
-	addHostPathMapping(pod, container, "logfile", "/var/log/kube-controller-manager.log").ReadOnly = false
 	addHostPathMapping(pod, container, "varlibkcm", "/var/lib/kube-controller-manager")
+
+	addHostPathMapping(pod, container, "volplugins", volumePluginDir).ReadOnly = false
 
 	pod.Spec.Containers = append(pod.Spec.Containers, *container)
 
 	kubemanifest.MarkPodAsCritical(pod)
+	kubemanifest.MarkPodAsClusterCritical(pod)
 
 	return pod, nil
 }

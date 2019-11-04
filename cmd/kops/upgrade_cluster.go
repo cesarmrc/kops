@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,8 +22,8 @@ import (
 	"strings"
 
 	"github.com/blang/semver"
-	"github.com/golang/glog"
 	"github.com/spf13/cobra"
+	"k8s.io/klog"
 
 	"k8s.io/kops"
 	api "k8s.io/kops/pkg/apis/kops"
@@ -56,7 +56,7 @@ func init() {
 		},
 	}
 
-	cmd.Flags().BoolVar(&upgradeCluster.Yes, "yes", false, "Apply update")
+	cmd.Flags().BoolVarP(&upgradeCluster.Yes, "yes", "y", false, "Apply update")
 	cmd.Flags().StringVar(&upgradeCluster.Channel, "channel", "", "Channel to use for upgrade")
 
 	upgradeCmd.AddCommand(cmd)
@@ -132,7 +132,7 @@ func (c *UpgradeClusterCmd) Run(args []string) error {
 	{
 		sv, err := util.ParseKubernetesVersion(cluster.Spec.KubernetesVersion)
 		if err != nil {
-			glog.Warningf("error parsing KubernetesVersion %q", cluster.Spec.KubernetesVersion)
+			klog.Warningf("error parsing KubernetesVersion %q", cluster.Spec.KubernetesVersion)
 		} else {
 			currentKubernetesVersion = sv
 		}
@@ -143,7 +143,7 @@ func (c *UpgradeClusterCmd) Run(args []string) error {
 	// We won't propose a downgrade
 	// TODO: What if a kubernetes version is bad?
 	if currentKubernetesVersion != nil && proposedKubernetesVersion != nil && currentKubernetesVersion.GT(*proposedKubernetesVersion) {
-		glog.Warningf("cluster version %q is greater than recommended version %q", *currentKubernetesVersion, *proposedKubernetesVersion)
+		klog.Warningf("cluster version %q is greater than recommended version %q", *currentKubernetesVersion, *proposedKubernetesVersion)
 		proposedKubernetesVersion = currentKubernetesVersion
 	}
 
@@ -196,7 +196,7 @@ func (c *UpgradeClusterCmd) Run(args []string) error {
 		image := channel.FindImage(cloud.ProviderID(), *proposedKubernetesVersion)
 
 		if image == nil {
-			glog.Warningf("No matching images specified in channel; cannot prompt for upgrade")
+			klog.Warningf("No matching images specified in channel; cannot prompt for upgrade")
 		} else {
 			for _, ig := range instanceGroups {
 				if strings.Contains(ig.Spec.Image, "kope.io") {
@@ -213,7 +213,7 @@ func (c *UpgradeClusterCmd) Run(args []string) error {
 						})
 					}
 				} else {
-					glog.Infof("Custom image (%s) has been provided for Instance Group %q; not updating image", ig.Spec.Image, ig.GetName())
+					klog.Infof("Custom image (%s) has been provided for Instance Group %q; not updating image", ig.Spec.Image, ig.GetName())
 				}
 			}
 		}

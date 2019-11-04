@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -195,6 +195,7 @@ func (_ *FirewallRule) RenderTerraform(t *terraform.TerraformTarget, a, e, chang
 		Name:         g.Name,
 		SourceRanges: g.SourceRanges,
 		TargetTags:   g.TargetTags,
+		SourceTags:   g.SourceTags,
 		Allowed:      allowed,
 	}
 

@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 	"sort"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 type Literal struct {
@@ -87,7 +87,7 @@ func SortLiterals(v []*Literal) {
 	proxies, err := buildSortProxies(v)
 	if err != nil {
 		// Very unexpected
-		glog.Fatalf("error processing terraform Literal: %v", err)
+		klog.Fatalf("error processing terraform Literal: %v", err)
 	}
 
 	sort.Sort(byKey(proxies))

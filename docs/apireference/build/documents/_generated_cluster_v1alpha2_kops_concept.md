@@ -7,7 +7,7 @@
 
 ```bdocs-tab:example_yaml
 
-apiVersion: kops/v1alpha2
+apiVersion: kops.k8s.io/v1alpha2
 kind: Cluster
 metadata:
   creationTimestamp: "2019-12-10T22:42:27Z"
@@ -113,7 +113,7 @@ Appears In:
 
 Field        | Description
 ------------ | -----------
-additionalNetworkCIDRs <br /> *string array*    | AdditionalNetworkCIDRs is a list of aditional CIDR used for the AWS VPC or otherwise allocated to k8s. This is a real CIDR, not the internal k8s network On AWS, it maps to any aditional CIDRs added to a VPC.
+additionalNetworkCIDRs <br /> *string array*    | AdditionalNetworkCIDRs is a list of additional CIDR used for the AWS VPC or otherwise allocated to k8s. This is a real CIDR, not the internal k8s network On AWS, it maps to any additional CIDRs added to a VPC.
 additionalPolicies <br /> *object*    | Additional policies to add for roles
 additionalSans <br /> *string array*    | AdditionalSANs adds additional Subject Alternate Names to apiserver cert that kops generates
 addons <br /> *[AddonSpec](#addonspec-v1alpha2-kops) array*    | Additional addons that should be installed on the cluster
@@ -138,7 +138,7 @@ externalDns <br /> *[ExternalDNSConfig](#externaldnsconfig-v1alpha2-kops)*    |
 fileAssets <br /> *[FileAssetSpec](#fileassetspec-v1alpha2-kops) array*    | A collection of files assets for deployed cluster wide
 hooks <br /> *[HookSpec](#hookspec-v1alpha2-kops) array*    | Hooks for custom actions e.g. on first installation
 iam <br /> *[IAMSpec](#iamspec-v1alpha2-kops)*    | IAM field adds control over the IAM security policies applied to resources
-isolateMasters <br /> *boolean*    | IsolatesMasters determines whether we should lock down masters so that they are not on the pod network. true is the kube-up behaviour, but it is very surprising: it means that daemonsets only work on the master if they have hostNetwork=true. false is now the default, and it will:  * give the master a normal PodCIDR  * run kube-proxy on the master  * enable debugging handlers on the master, so kubectl logs works
+isolateMasters <br /> *boolean*    | IsolateMasters determines whether we should lock down masters so that they are not on the pod network. true is the kube-up behaviour, but it is very surprising: it means that daemonsets only work on the master if they have hostNetwork=true. false is now the default, and it will:  * give the master a normal PodCIDR  * run kube-proxy on the master  * enable debugging handlers on the master, so kubectl logs works
 keyStore <br /> *string*    | KeyStore is the VFS path to where SSL keys and certificates are stored
 kubeAPIServer <br /> *[KubeAPIServerConfig](#kubeapiserverconfig-v1alpha2-kops)*    | 
 kubeControllerManager <br /> *[KubeControllerManagerConfig](#kubecontrollermanagerconfig-v1alpha2-kops)*    | 

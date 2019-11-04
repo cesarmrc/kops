@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,12 +20,11 @@ import (
 	"fmt"
 	"strings"
 
+	"k8s.io/kops/pkg/rbac"
 	"k8s.io/kops/pkg/tokens"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/fitasks"
 	"k8s.io/kops/util/pkg/vfs"
-
-	"k8s.io/apiserver/pkg/authentication/user"
 )
 
 // PKIModelBuilder configures PKI keypairs, as well as tokens
@@ -60,7 +59,7 @@ func (b *PKIModelBuilder) Build(c *fi.ModelBuilderContext) error {
 			c.AddTask(&fitasks.Keypair{
 				Name:      fi.String("kubelet"),
 				Lifecycle: b.Lifecycle,
-				Subject:   "o=" + user.NodesGroup + ",cn=kubelet",
+				Subject:   "o=" + rbac.NodesGroup + ",cn=kubelet",
 				Type:      "client",
 				Signer:    defaultCA,
 				Format:    format,
@@ -84,7 +83,7 @@ func (b *PKIModelBuilder) Build(c *fi.ModelBuilderContext) error {
 		t := &fitasks.Keypair{
 			Name:      fi.String("kube-scheduler"),
 			Lifecycle: b.Lifecycle,
-			Subject:   "cn=" + user.KubeScheduler,
+			Subject:   "cn=" + rbac.KubeScheduler,
 			Type:      "client",
 			Signer:    defaultCA,
 			Format:    format,
@@ -96,7 +95,7 @@ func (b *PKIModelBuilder) Build(c *fi.ModelBuilderContext) error {
 		t := &fitasks.Keypair{
 			Name:      fi.String("kube-proxy"),
 			Lifecycle: b.Lifecycle,
-			Subject:   "cn=" + user.KubeProxy,
+			Subject:   "cn=" + rbac.KubeProxy,
 			Type:      "client",
 			Signer:    defaultCA,
 			Format:    format,
@@ -108,7 +107,7 @@ func (b *PKIModelBuilder) Build(c *fi.ModelBuilderContext) error {
 		t := &fitasks.Keypair{
 			Name:      fi.String("kube-controller-manager"),
 			Lifecycle: b.Lifecycle,
-			Subject:   "cn=" + user.KubeControllerManager,
+			Subject:   "cn=" + rbac.KubeControllerManager,
 			Type:      "client",
 			Signer:    defaultCA,
 			Format:    format,
@@ -116,11 +115,13 @@ func (b *PKIModelBuilder) Build(c *fi.ModelBuilderContext) error {
 		c.AddTask(t)
 	}
 
-	// check if we need to generate certificates for etcd peers certificates from a different CA?
-	// @question i think we should use another KeyStore for this, perhaps registering a EtcdKeyStore given
-	// that mutual tls used to verify between the peers we don't want certificates for kubernetes able to act as a peer.
-	// For clients assuming we are using etcdv3 is can switch on user authentication and map the common names for auth.
-	if b.UseEtcdTLS() {
+	if b.UseEtcdManager() {
+		// We generate keypairs in the etcdmanager task itself
+	} else if b.UseEtcdTLS() {
+		// check if we need to generate certificates for etcd peers certificates from a different CA?
+		// @question i think we should use another KeyStore for this, perhaps registering a EtcdKeyStore given
+		// that mutual tls used to verify between the peers we don't want certificates for kubernetes able to act as a peer.
+		// For clients assuming we are using etcdv3 is can switch on user authentication and map the common names for auth.
 		servingNames := []string{fmt.Sprintf("*.internal.%s", b.ClusterName()), "localhost", "127.0.0.1"}
 		// @question should wildcard's be here instead of generating per node. If we ever provide the
 		// ability to resize the master, this will become a blocker
@@ -155,12 +156,13 @@ func (b *PKIModelBuilder) Build(c *fi.ModelBuilderContext) error {
 		}
 		c.AddTask(&fitasks.Keypair{
 			AlternateNames: peerNames,
-			Lifecycle:      b.Lifecycle,
-			Name:           fi.String("etcd-peer"),
-			Subject:        "cn=etcd-peer",
-			Type:           "clientServer",
-			Signer:         defaultCA,
-			Format:         format,
+
+			Lifecycle: b.Lifecycle,
+			Name:      fi.String("etcd-peer"),
+			Subject:   "cn=etcd-peer",
+			Type:      "clientServer",
+			Signer:    defaultCA,
+			Format:    format,
 		})
 
 		c.AddTask(&fitasks.Keypair{
@@ -172,8 +174,8 @@ func (b *PKIModelBuilder) Build(c *fi.ModelBuilderContext) error {
 			Format:    format,
 		})
 
-		// @check if calico or Cilium is enabled as the CNI provider
-		if b.KopsModelContext.Cluster.Spec.Networking.Calico != nil || b.KopsModelContext.Cluster.Spec.Networking.Cilium != nil {
+		// @check if calico is enabled as the CNI provider
+		if b.KopsModelContext.Cluster.Spec.Networking.Calico != nil {
 			c.AddTask(&fitasks.Keypair{
 				Name:      fi.String("calico-client"),
 				Lifecycle: b.Lifecycle,
@@ -200,7 +202,7 @@ func (b *PKIModelBuilder) Build(c *fi.ModelBuilderContext) error {
 		t := &fitasks.Keypair{
 			Name:      fi.String("kubecfg"),
 			Lifecycle: b.Lifecycle,
-			Subject:   "o=" + user.SystemPrivilegedGroup + ",cn=kubecfg",
+			Subject:   "o=" + rbac.SystemPrivilegedGroup + ",cn=kubecfg",
 			Type:      "client",
 			Signer:    defaultCA,
 			Format:    format,
@@ -247,7 +249,7 @@ func (b *PKIModelBuilder) Build(c *fi.ModelBuilderContext) error {
 		t := &fitasks.Keypair{
 			Name:      fi.String("kops"),
 			Lifecycle: b.Lifecycle,
-			Subject:   "o=" + user.SystemPrivilegedGroup + ",cn=kops",
+			Subject:   "o=" + rbac.SystemPrivilegedGroup + ",cn=kops",
 			Type:      "client",
 			Signer:    defaultCA,
 			Format:    format,

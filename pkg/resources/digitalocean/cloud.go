@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,15 +17,16 @@ limitations under the License.
 package digitalocean
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 
 	"github.com/digitalocean/godo"
-	"github.com/golang/glog"
 	"golang.org/x/oauth2"
+	"k8s.io/klog"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/kops/dnsprovider/pkg/dnsprovider"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/cloudinstances"
@@ -70,7 +71,7 @@ func NewCloud(region string) (*Cloud, error) {
 		AccessToken: accessToken,
 	}
 
-	oauthClient := oauth2.NewClient(oauth2.NoContext, tokenSource)
+	oauthClient := oauth2.NewClient(context.TODO(), tokenSource)
 	client := godo.NewClient(oauthClient)
 
 	return &Cloud{
@@ -82,19 +83,19 @@ func NewCloud(region string) (*Cloud, error) {
 
 // GetCloudGroups is not implemented yet, that needs to return the instances and groups that back a kops cluster.
 func (c *Cloud) GetCloudGroups(cluster *kops.Cluster, instancegroups []*kops.InstanceGroup, warnUnmatched bool, nodes []v1.Node) (map[string]*cloudinstances.CloudInstanceGroup, error) {
-	glog.V(8).Info("digitalocean cloud provider GetCloudGroups not implemented yet")
+	klog.V(8).Info("digitalocean cloud provider GetCloudGroups not implemented yet")
 	return nil, fmt.Errorf("digital ocean cloud provider does not support getting cloud groups at this time")
 }
 
 // DeleteGroup is not implemented yet, is a func that needs to delete a DO instance group.
 func (c *Cloud) DeleteGroup(g *cloudinstances.CloudInstanceGroup) error {
-	glog.V(8).Info("digitalocean cloud provider DeleteGroup not implemented yet")
+	klog.V(8).Info("digitalocean cloud provider DeleteGroup not implemented yet")
 	return fmt.Errorf("digital ocean cloud provider does not support deleting cloud groups at this time")
 }
 
 // DeleteInstance is not implemented yet, is func needs to delete a DO instance.
 func (c *Cloud) DeleteInstance(i *cloudinstances.CloudInstanceGroupMember) error {
-	glog.V(8).Info("digitalocean cloud provider DeleteInstance not implemented yet")
+	klog.V(8).Info("digitalocean cloud provider DeleteInstance not implemented yet")
 	return fmt.Errorf("digital ocean cloud provider does not support deleting cloud instances at this time")
 }
 

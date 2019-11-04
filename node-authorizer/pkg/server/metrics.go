@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ var (
 	)
 	authorizerLatencyMetric = prometheus.NewSummary(
 		prometheus.SummaryOpts{
-			Name: "node_authorizer_latercy_seconds",
+			Name: "node_authorizer_latency_seconds",
 			Help: "A summary of the latency for the authorizer in seconds",
 		},
 	)

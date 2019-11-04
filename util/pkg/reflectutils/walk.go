@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 var SkipReflection = errors.New("skip this value")
@@ -47,11 +47,11 @@ func JsonMergeStruct(dest, src interface{}) {
 	// Not the most efficient approach, but simple & relatively well defined
 	j, err := json.Marshal(src)
 	if err != nil {
-		glog.Fatalf("error marshalling config: %v", err)
+		klog.Fatalf("error marshaling config: %v", err)
 	}
 	err = json.Unmarshal(j, dest)
 	if err != nil {
-		glog.Fatalf("error unmarshalling config: %v", err)
+		klog.Fatalf("error unmarshaling config: %v", err)
 	}
 }
 
@@ -71,7 +71,7 @@ func InvokeMethod(target interface{}, name string, args ...interface{}) ([]refle
 	for _, a := range args {
 		argValues = append(argValues, reflect.ValueOf(a))
 	}
-	glog.V(12).Infof("Calling method %s on %T", method.Name, target)
+	klog.V(12).Infof("Calling method %s on %T", method.Name, target)
 	m := v.MethodByName(method.Name)
 	rv := m.Call(argValues)
 	return rv, nil
@@ -90,7 +90,7 @@ func BuildTypeName(t reflect.Type) string {
 	case reflect.Map:
 		return "map[" + BuildTypeName(t.Key()) + "]" + BuildTypeName(t.Elem())
 	default:
-		glog.Errorf("cannot find type name for: %v, assuming %s", t, t.Name())
+		klog.Errorf("cannot find type name for: %v, assuming %s", t, t.Name())
 		return t.Name()
 	}
 }
@@ -137,7 +137,6 @@ func reflectRecursive(path string, v reflect.Value, visitor visitorFunc) error {
 				}
 			}
 		}
-		break
 
 	case reflect.Map:
 		keys := v.MapKeys()
@@ -156,7 +155,6 @@ func reflectRecursive(path string, v reflect.Value, visitor visitorFunc) error {
 				}
 			}
 		}
-		break
 
 	case reflect.Array, reflect.Slice:
 		len := v.Len()
@@ -175,7 +173,6 @@ func reflectRecursive(path string, v reflect.Value, visitor visitorFunc) error {
 				}
 			}
 		}
-		break
 
 	case reflect.Ptr, reflect.Interface:
 		if !v.IsNil() {
@@ -185,7 +182,6 @@ func reflectRecursive(path string, v reflect.Value, visitor visitorFunc) error {
 				return err
 			}
 		}
-		break
 	}
 
 	return nil
@@ -208,7 +204,7 @@ func IsPrimitiveValue(v reflect.Value) bool {
 		return false
 
 	default:
-		glog.Fatalf("Unhandled kind: %v", v.Kind())
+		klog.Fatalf("Unhandled kind: %v", v.Kind())
 		return false
 	}
 }
@@ -234,10 +230,10 @@ func FormatValue(value interface{}) string {
 		return fmt.Sprintf("%q", t)
 	case fmt.Stringer:
 		// anything that defines String() is better than raw struct
-		return fmt.Sprintf("%s", t.String())
+		return t.String()
 	default:
 		// fallback to raw struct
-		// TODO: internal types have panic guards against json.Marshalling to prevent
+		// TODO: internal types have panic guards against json.Marshaling to prevent
 		// accidental use of internal types in external serialized form.  For now, use
 		// %#v, although it would be better to show a more expressive output in the future
 		return fmt.Sprintf("%#v", value)

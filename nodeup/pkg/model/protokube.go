@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -32,9 +32,10 @@ import (
 	"k8s.io/kops/pkg/systemd"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/nodeup/nodetasks"
+	"k8s.io/kops/util/pkg/proxy"
 
 	"github.com/blang/semver"
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 // ProtokubeBuilder configures protokube
@@ -50,7 +51,7 @@ func (t *ProtokubeBuilder) Build(c *fi.ModelBuilderContext) error {
 
 	// check is not a master and we are not using gossip (https://github.com/kubernetes/kops/pull/3091)
 	if !t.IsMaster && !useGossip {
-		glog.V(2).Infof("skipping the provisioning of protokube on the nodes")
+		klog.V(2).Infof("skipping the provisioning of protokube on the nodes")
 		return nil
 	}
 
@@ -68,7 +69,7 @@ func (t *ProtokubeBuilder) Build(c *fi.ModelBuilderContext) error {
 		})
 
 		// retrieve the etcd peer certificates and private keys from the keystore
-		if t.UseEtcdTLS() {
+		if !t.UseEtcdManager() && t.UseEtcdTLS() {
 			for _, x := range []string{"etcd", "etcd-peer", "etcd-client"} {
 				if err := t.BuildCertificateTask(c, x, fmt.Sprintf("%s.pem", x)); err != nil {
 					return err
@@ -114,6 +115,11 @@ func (t *ProtokubeBuilder) buildSystemdService() (*nodetasks.Service, error) {
 		"-v", "/run/systemd:/run/systemd",
 	}
 
+	if fi.BoolValue(t.Cluster.Spec.UseHostCertificates) {
+		dockerArgs = append(dockerArgs, "-v")
+		dockerArgs = append(dockerArgs, "/etc/ssl/certs:/etc/ssl/certs")
+	}
+
 	// add kubectl only if a master
 	// path changes depending on distro, and always mount it on /opt/kops/bin
 	// kubectl is downloaded and installed by other tasks
@@ -139,6 +145,8 @@ func (t *ProtokubeBuilder) buildSystemdService() (*nodetasks.Service, error) {
 	manifest := &systemd.Manifest{}
 	manifest.Set("Unit", "Description", "Kubernetes Protokube Service")
 	manifest.Set("Unit", "Documentation", "https://github.com/kubernetes/kops")
+
+	// @step: let need a dependency for any volumes to be mounted first
 	manifest.Set("Service", "ExecStartPre", t.ProtokubeImagePullCommand())
 	manifest.Set("Service", "ExecStart", protokubeCommand)
 	manifest.Set("Service", "Restart", "always")
@@ -147,7 +155,7 @@ func (t *ProtokubeBuilder) buildSystemdService() (*nodetasks.Service, error) {
 	manifest.Set("Install", "WantedBy", "multi-user.target")
 
 	manifestString := manifest.Render()
-	glog.V(8).Infof("Built service manifest %q\n%s", "protokube", manifestString)
+	klog.V(8).Infof("Built service manifest %q\n%s", "protokube", manifestString)
 
 	service := &nodetasks.Service{
 		Name:       "protokube.service",
@@ -174,20 +182,20 @@ func (t *ProtokubeBuilder) ProtokubeImageName() string {
 
 // ProtokubeImagePullCommand returns the command to pull the image
 func (t *ProtokubeBuilder) ProtokubeImagePullCommand() string {
-	source := ""
+	var sources []string
 	if t.NodeupConfig.ProtokubeImage != nil {
-		source = t.NodeupConfig.ProtokubeImage.Source
+		sources = t.NodeupConfig.ProtokubeImage.Sources
 	}
-	if source == "" {
+	if len(sources) == 0 {
 		// Nothing to pull; return dummy value
 		return "/bin/true"
 	}
-	if strings.HasPrefix(source, "http:") || strings.HasPrefix(source, "https:") || strings.HasPrefix(source, "s3:") {
+	if strings.HasPrefix(sources[0], "http:") || strings.HasPrefix(sources[0], "https:") || strings.HasPrefix(sources[0], "s3:") {
 		// We preloaded the image; return a dummy value
 		return "/bin/true"
 	}
 
-	return "/usr/bin/docker pull " + t.NodeupConfig.ProtokubeImage.Source
+	return "/usr/bin/docker pull " + sources[0]
 }
 
 // ProtokubeFlags are the flags for protokube
@@ -220,6 +228,26 @@ type ProtokubeFlags struct {
 
 	// ManageEtcd is true if protokube should manage etcd; being replaced by etcd-manager
 	ManageEtcd bool `json:"manageEtcd,omitempty" flag:"manage-etcd"`
+
+	// RemoveDNSNames allows us to remove dns records, so that they can be managed elsewhere
+	// We use it e.g. for the switch to etcd-manager
+	RemoveDNSNames string `json:"removeDNSNames,omitempty" flag:"remove-dns-names"`
+
+	// BootstrapMasterNodeLabels applies the critical node-role labels to our node,
+	// which lets us bring up the controllers that can only run on masters, which are then
+	// responsible for node labels.  The node is specified by NodeName
+	BootstrapMasterNodeLabels bool `json:"bootstrapMasterNodeLabels,omitempty" flag:"bootstrap-master-node-labels"`
+
+	// NodeName is the name of the node as will be created in kubernetes.  Primarily used by BootstrapMasterNodeLabels.
+	NodeName string `json:"nodeName,omitempty" flag:"node-name"`
+
+	GossipProtocol *string `json:"gossip-protocol" flag:"gossip-protocol"`
+	GossipListen   *string `json:"gossip-listen" flag:"gossip-listen"`
+	GossipSecret   *string `json:"gossip-secret" flag:"gossip-secret"`
+
+	GossipProtocolSecondary *string `json:"gossip-protocol-secondary" flag:"gossip-protocol-secondary"`
+	GossipListenSecondary   *string `json:"gossip-listen-secondary" flag:"gossip-listen-secondary"`
+	GossipSecretSecondary   *string `json:"gossip-secret-secondary" flag:"gossip-secret-secondary"`
 }
 
 // ProtokubeFlags is responsible for building the command line flags for protokube
@@ -250,7 +278,7 @@ func (t *ProtokubeBuilder) ProtokubeFlags(k8sVersion semver.Version) (*Protokube
 
 	f.ManageEtcd = false
 	if len(t.NodeupConfig.EtcdManifests) == 0 {
-		glog.V(4).Infof("no EtcdManifests; protokube will manage etcd")
+		klog.V(4).Infof("no EtcdManifests; protokube will manage etcd")
 		f.ManageEtcd = true
 	}
 
@@ -317,14 +345,25 @@ func (t *ProtokubeBuilder) ProtokubeFlags(k8sVersion semver.Version) (*Protokube
 			f.Zone = append(f.Zone, "*/"+zone)
 		}
 	} else {
-		glog.Warningf("DNSZone not specified; protokube won't be able to update DNS")
+		klog.Warningf("DNSZone not specified; protokube won't be able to update DNS")
 		// @TODO: Should we permit wildcard updates if zone is not specified?
 		//argv = append(argv, "--zone=*/*")
 	}
 
 	if dns.IsGossipHostname(t.Cluster.Spec.MasterInternalName) {
-		glog.Warningf("MasterInternalName %q implies gossip DNS", t.Cluster.Spec.MasterInternalName)
+		klog.Warningf("MasterInternalName %q implies gossip DNS", t.Cluster.Spec.MasterInternalName)
 		f.DNSProvider = fi.String("gossip")
+		if t.Cluster.Spec.GossipConfig != nil {
+			f.GossipProtocol = t.Cluster.Spec.GossipConfig.Protocol
+			f.GossipListen = t.Cluster.Spec.GossipConfig.Listen
+			f.GossipSecret = t.Cluster.Spec.GossipConfig.Secret
+
+			if t.Cluster.Spec.GossipConfig.Secondary != nil {
+				f.GossipProtocolSecondary = t.Cluster.Spec.GossipConfig.Secondary.Protocol
+				f.GossipListenSecondary = t.Cluster.Spec.GossipConfig.Secondary.Listen
+				f.GossipSecretSecondary = t.Cluster.Spec.GossipConfig.Secondary.Secret
+			}
+		}
 
 		// @TODO: This is hacky, but we want it so that we can have a different internal & external name
 		internalSuffix := t.Cluster.Spec.MasterInternalName
@@ -349,7 +388,7 @@ func (t *ProtokubeBuilder) ProtokubeFlags(k8sVersion semver.Version) (*Protokube
 				f.ClusterID = fi.String(t.Cluster.ObjectMeta.Name)
 				f.DNSServer = fi.String(*t.Cluster.Spec.CloudConfig.VSphereCoreDNSServer)
 			default:
-				glog.Warningf("Unknown cloudprovider %q; won't set DNS provider", t.Cluster.Spec.CloudProvider)
+				klog.Warningf("Unknown cloudprovider %q; won't set DNS provider", t.Cluster.Spec.CloudProvider)
 			}
 		}
 	}
@@ -362,6 +401,40 @@ func (t *ProtokubeBuilder) ProtokubeFlags(k8sVersion semver.Version) (*Protokube
 		f.ApplyTaints = fi.Bool(true)
 	}
 
+	if k8sVersion.Major == 1 && k8sVersion.Minor >= 16 {
+		f.BootstrapMasterNodeLabels = true
+
+		nodeName, err := t.NodeName()
+		if err != nil {
+			return nil, fmt.Errorf("error getting NodeName: %v", err)
+		}
+		f.NodeName = nodeName
+	}
+
+	// Remove DNS names if we're using etcd-manager
+	if !f.ManageEtcd {
+		var names []string
+
+		// Mirroring the logic used to construct DNS names in protokube/pkg/protokube/etcd_cluster.go
+		suffix := fi.StringValue(f.DNSInternalSuffix)
+		if !strings.HasPrefix(suffix, ".") {
+			suffix = "." + suffix
+		}
+
+		for _, c := range t.Cluster.Spec.EtcdClusters {
+			clusterName := "etcd-" + c.Name
+			if clusterName == "etcd-main" {
+				clusterName = "etcd"
+			}
+			for _, m := range c.Members {
+				name := clusterName + "-" + m.Name + suffix
+				names = append(names, name)
+			}
+		}
+
+		f.RemoveDNSNames = strings.Join(names, ",")
+	}
+
 	return f, nil
 }
 
@@ -371,7 +444,7 @@ func (t *ProtokubeBuilder) ProtokubeEnvironmentVariables() string {
 
 	// TODO write out an environments file for this.  This is getting a tad long.
 
-	// Passin gossip dns connection limit
+	// Pass in gossip dns connection limit
 	if os.Getenv("GOSSIP_DNS_CONN_LIMIT") != "" {
 		buffer.WriteString(" ")
 		buffer.WriteString("-e 'GOSSIP_DNS_CONN_LIMIT=")
@@ -410,10 +483,47 @@ func (t *ProtokubeBuilder) ProtokubeEnvironmentVariables() string {
 		buffer.WriteString(" ")
 	}
 
+	if os.Getenv("OS_AUTH_URL") != "" {
+		for _, envVar := range []string{
+			"OS_TENANT_ID", "OS_TENANT_NAME", "OS_PROJECT_ID", "OS_PROJECT_NAME",
+			"OS_PROJECT_DOMAIN_NAME", "OS_PROJECT_DOMAIN_ID",
+			"OS_DOMAIN_NAME", "OS_DOMAIN_ID",
+			"OS_USERNAME",
+			"OS_PASSWORD",
+			"OS_AUTH_URL",
+			"OS_REGION_NAME",
+		} {
+			buffer.WriteString(" -e '")
+			buffer.WriteString(envVar)
+			buffer.WriteString("=")
+			buffer.WriteString(os.Getenv(envVar))
+			buffer.WriteString("'")
+		}
+	}
+
 	if kops.CloudProviderID(t.Cluster.Spec.CloudProvider) == kops.CloudProviderDO && os.Getenv("DIGITALOCEAN_ACCESS_TOKEN") != "" {
 		buffer.WriteString(" ")
 		buffer.WriteString("-e 'DIGITALOCEAN_ACCESS_TOKEN=")
 		buffer.WriteString(os.Getenv("DIGITALOCEAN_ACCESS_TOKEN"))
+		buffer.WriteString("'")
+		buffer.WriteString(" ")
+	}
+
+	if os.Getenv("OSS_REGION") != "" {
+		buffer.WriteString(" ")
+		buffer.WriteString("-e 'OSS_REGION=")
+		buffer.WriteString(os.Getenv("OSS_REGION"))
+		buffer.WriteString("'")
+		buffer.WriteString(" ")
+	}
+
+	if os.Getenv("ALIYUN_ACCESS_KEY_ID") != "" {
+		buffer.WriteString(" ")
+		buffer.WriteString("-e 'ALIYUN_ACCESS_KEY_ID=")
+		buffer.WriteString(os.Getenv("ALIYUN_ACCESS_KEY_ID"))
+		buffer.WriteString("'")
+		buffer.WriteString(" -e 'ALIYUN_ACCESS_KEY_SECRET=")
+		buffer.WriteString(os.Getenv("ALIYUN_ACCESS_KEY_SECRET"))
 		buffer.WriteString("'")
 		buffer.WriteString(" ")
 	}
@@ -424,7 +534,7 @@ func (t *ProtokubeBuilder) ProtokubeEnvironmentVariables() string {
 }
 
 func (t *ProtokubeBuilder) writeProxyEnvVars(buffer *bytes.Buffer) {
-	for _, envVar := range getProxyEnvVars(t.Cluster.Spec.EgressProxy) {
+	for _, envVar := range proxy.GetProxyEnvVars(t.Cluster.Spec.EgressProxy) {
 		buffer.WriteString(" -e ")
 		buffer.WriteString(envVar.Name)
 		buffer.WriteString("=")

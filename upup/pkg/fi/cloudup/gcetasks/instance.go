@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/golang/glog"
 	compute "google.golang.org/api/compute/v0.beta"
+	"k8s.io/klog"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/gce"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
@@ -73,9 +73,7 @@ func (e *Instance) Find(c *fi.Context) (*Instance, error) {
 
 	actual := &Instance{}
 	actual.Name = &r.Name
-	for _, tag := range r.Tags.Items {
-		actual.Tags = append(actual.Tags, tag)
-	}
+	actual.Tags = append(actual.Tags, r.Tags.Items...)
 	actual.Zone = fi.String(lastComponent(r.Zone))
 	actual.MachineType = fi.String(lastComponent(r.MachineType))
 	actual.CanIPForward = &r.CanIpForward
@@ -325,14 +323,14 @@ func (_ *Instance) RenderGCE(t *gce.GCEAPITarget, a, e, changes *Instance) error
 	}
 
 	if a == nil {
-		glog.V(2).Infof("Creating instance %q", i.Name)
+		klog.V(2).Infof("Creating instance %q", i.Name)
 		_, err := cloud.Compute().Instances.Insert(project, zone, i).Do()
 		if err != nil {
 			return fmt.Errorf("error creating Instance: %v", err)
 		}
 	} else {
 		if changes.Metadata != nil {
-			glog.V(2).Infof("Updating instance metadata on %q", i.Name)
+			klog.V(2).Infof("Updating instance metadata on %q", i.Name)
 
 			i.Metadata.Fingerprint = a.metadataFingerprint
 
@@ -349,7 +347,7 @@ func (_ *Instance) RenderGCE(t *gce.GCEAPITarget, a, e, changes *Instance) error
 		}
 
 		if !changes.isZero() {
-			glog.Errorf("Cannot apply changes to Instance: %v", changes)
+			klog.Errorf("Cannot apply changes to Instance: %v", changes)
 			return fmt.Errorf("Cannot apply changes to Instance: %v", changes)
 		}
 	}
@@ -371,11 +369,11 @@ func BuildImageURL(defaultProject, nameSpec string) string {
 		project = defaultProject
 		name = tokens[0]
 	} else {
-		glog.Exitf("Cannot parse image spec: %q", nameSpec)
+		klog.Exitf("Cannot parse image spec: %q", nameSpec)
 	}
 
 	u := fmt.Sprintf("https://www.googleapis.com/compute/v1/projects/%s/global/images/%s", project, name)
-	glog.V(4).Infof("Mapped image %q to URL %q", nameSpec, u)
+	klog.V(4).Infof("Mapped image %q to URL %q", nameSpec, u)
 	return u
 }
 
@@ -385,10 +383,10 @@ func ShortenImageURL(defaultProject string, imageURL string) (string, error) {
 		return "", err
 	}
 	if u.Project == defaultProject {
-		glog.V(4).Infof("Resolved image %q -> %q", imageURL, u.Name)
+		klog.V(4).Infof("Resolved image %q -> %q", imageURL, u.Name)
 		return u.Name, nil
 	} else {
-		glog.V(4).Infof("Resolved image %q -> %q", imageURL, u.Project+"/"+u.Name)
+		klog.V(4).Infof("Resolved image %q -> %q", imageURL, u.Project+"/"+u.Name)
 		return u.Project + "/" + u.Name, nil
 	}
 }

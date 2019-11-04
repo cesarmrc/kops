@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ var _ fi.ModelBuilder = &EtcdTLSBuilder{}
 // Build is responsible for performing setup for CNIs that need etcd TLS support
 func (b *EtcdTLSBuilder) Build(c *fi.ModelBuilderContext) error {
 	// @check if tls is enabled and if so, we need to download the client certificates
-	if b.UseEtcdTLS() {
+	if !b.UseEtcdManager() && b.UseEtcdTLS() {
 		name := "calico-client"
 		dirname := "calico"
 		ca := filepath.Join(dirname, "ca.pem")

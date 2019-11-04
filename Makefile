@@ -1,4 +1,4 @@
-# Copyright 2016 The Kubernetes Authors.
+# Copyright 2019 The Kubernetes Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,12 +15,13 @@
 
 DOCKER_REGISTRY?=gcr.io/must-override
 S3_BUCKET?=s3://must-override/
+UPLOAD_DEST?=$(S3_BUCKET)
 GCS_LOCATION?=gs://must-override
 GCS_URL=$(GCS_LOCATION:gs://%=https://storage.googleapis.com/%)
 LATEST_FILE?=latest-ci.txt
 GOPATH_1ST:=$(shell go env | grep GOPATH | cut -f 2 -d \")
 UNIQUE:=$(shell date +%s)
-GOVERSION=1.10.3
+GOVERSION=1.12.11
 BUILD=$(GOPATH_1ST)/src/k8s.io/kops/.build
 LOCAL=$(BUILD)/local
 BINDATA_TARGETS=upup/models/bindata.go
@@ -38,15 +39,16 @@ BAZELIMAGES=$(BAZELDIST)/images
 BAZELUPLOAD=$(BAZELBUILD)/upload
 UID:=$(shell id -u)
 GID:=$(shell id -g)
-TESTABLE_PACKAGES:=$(shell egrep -v "k8s.io/kops/vendor" hack/.packages)
-# We need to ignore clientsets because of kubernetes/kubernetes#60584
-GOVETABLE_PACKAGES:=$(shell egrep -v "k8s.io/kops/vendor|clientset/fake" hack/.packages)
 BAZEL_OPTIONS?=
+BAZEL_CONFIG?=
 API_OPTIONS?=
 GCFLAGS?=
 
 # See http://stackoverflow.com/questions/18136918/how-to-get-current-relative-directory-of-your-makefile
 MAKEDIR:=$(strip $(shell dirname "$(realpath $(lastword $(MAKEFILE_LIST)))"))
+
+UPLOAD_CMD=$(MAKEDIR)/hack/upload
+
 
 # Unexport environment variables that can affect tests and are not used in builds
 unexport AWS_ACCESS_KEY_ID AWS_REGION AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN CNI_VERSION_URL DNS_IGNORE_NS_CHECK DNSCONTROLLER_IMAGE DO_ACCESS_TOKEN GOOGLE_APPLICATION_CREDENTIALS
@@ -54,7 +56,9 @@ unexport KOPS_BASE_URL KOPS_CLUSTER_NAME KOPS_RUN_OBSOLETE_VERSION KOPS_STATE_ST
 unexport SKIP_REGION_CHECK S3_ACCESS_KEY_ID S3_ENDPOINT S3_REGION S3_SECRET_ACCESS_KEY VSPHERE_USERNAME VSPHERE_PASSWORD
 
 # Keep in sync with upup/models/cloudup/resources/addons/dns-controller/
-DNS_CONTROLLER_TAG=1.11.0-alpha.1
+DNS_CONTROLLER_TAG=1.15.0-alpha.1
+# Keep in sync with upup/models/cloudup/resources/addons/kops-controller.addons.k8s.io/
+KOPS_CONTROLLER_TAG=1.15.0-alpha.1
 
 # Keep in sync with logic in get_workspace_status
 # TODO: just invoke tools/get_workspace_status.sh?
@@ -80,7 +84,7 @@ ifndef VERSION
   # we never cross versions.
   #
   # We expect that if you are uploading nodeup/protokube, you will set
-  # VERSION (along with S3_BUCKET), either directly or by setting CI=1
+  # VERSION (along with UPLOAD_DEST), either directly or by setting CI=1
   ifndef CI
     VERSION=${KOPS_RELEASE_VERSION}
   else
@@ -116,11 +120,6 @@ ifdef STATIC_BUILD
   EXTRA_LDFLAGS=-s -w
 endif
 
-SHASUMCMD := $(shell command -v sha1sum || command -v shasum; 2> /dev/null)
-
-ifndef SHASUMCMD
-  $(error "Neither sha1sum nor shasum command is available")
-endif
 
 # Set compiler flags to allow binary debugging
 ifdef DEBUGGABLE
@@ -212,6 +211,10 @@ check-builds-in-go19:
 check-builds-in-go110:
 	docker run -v ${GOPATH_1ST}/src/k8s.io/kops:/go/src/k8s.io/kops golang:1.10 make -C /go/src/k8s.io/kops ci
 
+.PHONY: check-builds-in-go111
+check-builds-in-go111:
+	docker run -v ${GOPATH_1ST}/src/k8s.io/kops:/go/src/k8s.io/kops golang:1.11 make -C /go/src/k8s.io/kops ci
+
 .PHONY: codegen
 codegen: kops-gobindata
 	go install k8s.io/kops/upup/tools/generators/...
@@ -220,6 +223,7 @@ codegen: kops-gobindata
 	PATH="${GOPATH_1ST}/bin:${PATH}" go generate k8s.io/kops/upup/pkg/fi/cloudup/dotasks
 	PATH="${GOPATH_1ST}/bin:${PATH}" go generate k8s.io/kops/upup/pkg/fi/cloudup/openstacktasks
 	PATH="${GOPATH_1ST}/bin:${PATH}" go generate k8s.io/kops/upup/pkg/fi/cloudup/alitasks
+	PATH="${GOPATH_1ST}/bin:${PATH}" go generate k8s.io/kops/upup/pkg/fi/cloudup/spotinsttasks
 	PATH="${GOPATH_1ST}/bin:${PATH}" go generate k8s.io/kops/upup/pkg/fi/assettasks
 	PATH="${GOPATH_1ST}/bin:${PATH}" go generate k8s.io/kops/upup/pkg/fi/fitasks
 
@@ -233,7 +237,7 @@ hooks: # Install Git hooks
 
 .PHONY: test
 test: ${BINDATA_TARGETS}  # Run tests locally
-	go test -v ${TESTABLE_PACKAGES}
+	go test -v ./...
 
 .PHONY: ${DIST}/linux/amd64/nodeup
 ${DIST}/linux/amd64/nodeup: ${BINDATA_TARGETS}
@@ -281,9 +285,12 @@ crossbuild-in-docker:
 .PHONY: kops-dist
 kops-dist: crossbuild-in-docker
 	mkdir -p ${DIST}
-	(${SHASUMCMD} ${DIST}/darwin/amd64/kops | cut -d' ' -f1) > ${DIST}/darwin/amd64/kops.sha1
-	(${SHASUMCMD} ${DIST}/linux/amd64/kops | cut -d' ' -f1) > ${DIST}/linux/amd64/kops.sha1
-	(${SHASUMCMD} ${DIST}/windows/amd64/kops.exe | cut -d' ' -f1) > ${DIST}/windows/amd64/kops.exe.sha1
+	tools/sha1 ${DIST}/darwin/amd64/kops ${DIST}/darwin/amd64/kops.sha1
+	tools/sha256 ${DIST}/darwin/amd64/kops ${DIST}/darwin/amd64/kops.sha256
+	tools/sha1 ${DIST}/linux/amd64/kops ${DIST}/linux/amd64/kops.sha1
+	tools/sha256 ${DIST}/linux/amd64/kops ${DIST}/linux/amd64/kops.sha256
+	tools/sha1 ${DIST}/windows/amd64/kops.exe ${DIST}/windows/amd64/kops.exe.sha1
+	tools/sha256 ${DIST}/windows/amd64/kops.exe ${DIST}/windows/amd64/kops.exe.sha256
 
 .PHONY: version-dist
 version-dist: nodeup-dist kops-dist protokube-export utils-dist
@@ -294,14 +301,19 @@ version-dist: nodeup-dist kops-dist protokube-export utils-dist
 	mkdir -p ${UPLOAD}/utils/${VERSION}/linux/amd64/
 	cp ${DIST}/nodeup ${UPLOAD}/kops/${VERSION}/linux/amd64/nodeup
 	cp ${DIST}/nodeup.sha1 ${UPLOAD}/kops/${VERSION}/linux/amd64/nodeup.sha1
+	cp ${DIST}/nodeup.sha256 ${UPLOAD}/kops/${VERSION}/linux/amd64/nodeup.sha256
 	cp ${IMAGES}/protokube.tar.gz ${UPLOAD}/kops/${VERSION}/images/protokube.tar.gz
 	cp ${IMAGES}/protokube.tar.gz.sha1 ${UPLOAD}/kops/${VERSION}/images/protokube.tar.gz.sha1
+	cp ${IMAGES}/protokube.tar.gz.sha256 ${UPLOAD}/kops/${VERSION}/images/protokube.tar.gz.sha256
 	cp ${DIST}/linux/amd64/kops ${UPLOAD}/kops/${VERSION}/linux/amd64/kops
 	cp ${DIST}/linux/amd64/kops.sha1 ${UPLOAD}/kops/${VERSION}/linux/amd64/kops.sha1
+	cp ${DIST}/linux/amd64/kops.sha256 ${UPLOAD}/kops/${VERSION}/linux/amd64/kops.sha256
 	cp ${DIST}/darwin/amd64/kops ${UPLOAD}/kops/${VERSION}/darwin/amd64/kops
 	cp ${DIST}/darwin/amd64/kops.sha1 ${UPLOAD}/kops/${VERSION}/darwin/amd64/kops.sha1
+	cp ${DIST}/darwin/amd64/kops.sha256 ${UPLOAD}/kops/${VERSION}/darwin/amd64/kops.sha256
 	cp ${DIST}/linux/amd64/utils.tar.gz ${UPLOAD}/kops/${VERSION}/linux/amd64/utils.tar.gz
 	cp ${DIST}/linux/amd64/utils.tar.gz.sha1 ${UPLOAD}/kops/${VERSION}/linux/amd64/utils.tar.gz.sha1
+	cp ${DIST}/linux/amd64/utils.tar.gz.sha256 ${UPLOAD}/kops/${VERSION}/linux/amd64/utils.tar.gz.sha256
 
 .PHONY: vsphere-version-dist
 vsphere-version-dist: nodeup-dist protokube-export
@@ -312,20 +324,32 @@ vsphere-version-dist: nodeup-dist protokube-export
 	mkdir -p ${UPLOAD}/utils/${VERSION}/linux/amd64/
 	cp ${DIST}/nodeup ${UPLOAD}/kops/${VERSION}/linux/amd64/nodeup
 	cp ${DIST}/nodeup.sha1 ${UPLOAD}/kops/${VERSION}/linux/amd64/nodeup.sha1
+	cp ${DIST}/nodeup.sha256 ${UPLOAD}/kops/${VERSION}/linux/amd64/nodeup.sha256
 	cp ${IMAGES}/protokube.tar.gz ${UPLOAD}/kops/${VERSION}/images/protokube.tar.gz
 	cp ${IMAGES}/protokube.tar.gz.sha1 ${UPLOAD}/kops/${VERSION}/images/protokube.tar.gz.sha1
+	cp ${IMAGES}/protokube.tar.gz.sha256 ${UPLOAD}/kops/${VERSION}/images/protokube.tar.gz.sha256
 	scp -r .build/dist/nodeup* ${TARGET}:${TARGET_PATH}/nodeup
 	scp -r .build/dist/images/protokube.tar.gz* ${TARGET}:${TARGET_PATH}/protokube/
 	make kops-dist
 	cp ${DIST}/linux/amd64/kops ${UPLOAD}/kops/${VERSION}/linux/amd64/kops
 	cp ${DIST}/linux/amd64/kops.sha1 ${UPLOAD}/kops/${VERSION}/linux/amd64/kops.sha1
+	cp ${DIST}/linux/amd64/kops.sha256 ${UPLOAD}/kops/${VERSION}/linux/amd64/kops.sha256
 	cp ${DIST}/darwin/amd64/kops ${UPLOAD}/kops/${VERSION}/darwin/amd64/kops
 	cp ${DIST}/darwin/amd64/kops.sha1 ${UPLOAD}/kops/${VERSION}/darwin/amd64/kops.sha1
+	cp ${DIST}/darwin/amd64/kops.sha256 ${UPLOAD}/kops/${VERSION}/darwin/amd64/kops.sha256
 	cp ${DIST}/windows/amd64/kops.exe ${UPLOAD}/kops/${VERSION}/windows/amd64/kops.exe
+	cp ${DIST}/windows/amd64/kops.exe.sha1 ${UPLOAD}/kops/${VERSION}/windows/amd64/kops.exe.sha1
+	cp ${DIST}/windows/amd64/kops.exe.sha256 ${UPLOAD}/kops/${VERSION}/windows/amd64/kops.exe.sha256
 
 .PHONY: upload
 upload: version-dist # Upload kops to S3
 	aws s3 sync --acl public-read ${UPLOAD}/ ${S3_BUCKET}
+
+# oss-upload builds kops and uploads to OSS
+.PHONY: oss-upload
+oss-upload: version-dist
+	@echo "== Uploading kops =="
+	aliyun oss cp --acl public-read -r -f --include "*" ${UPLOAD}/ ${OSS_BUCKET}
 
 # gcs-upload builds kops and uploads to GCS
 .PHONY: gcs-upload
@@ -406,7 +430,8 @@ protokube-image: protokube-build-in-docker
 protokube-export: protokube-image
 	docker save protokube:${PROTOKUBE_TAG} > ${IMAGES}/protokube.tar
 	gzip --force --best ${IMAGES}/protokube.tar
-	(${SHASUMCMD} ${IMAGES}/protokube.tar.gz | cut -d' ' -f1) > ${IMAGES}/protokube.tar.gz.sha1
+	tools/sha1 ${IMAGES}/protokube.tar.gz ${IMAGES}/protokube.tar.gz.sha1
+	tools/sha256 ${IMAGES}/protokube.tar.gz ${IMAGES}/protokube.tar.gz.sha256
 
 # protokube-push is no longer used (we upload a docker image tar file to S3 instead),
 # but we're keeping it around in case it is useful for development etc
@@ -430,7 +455,8 @@ nodeup-dist:
 	docker start nodeup-build-${UNIQUE}
 	docker exec nodeup-build-${UNIQUE} chown -R ${UID}:${GID} /go/src/k8s.io/kops/.build
 	docker cp nodeup-build-${UNIQUE}:/go/src/k8s.io/kops/.build/local/nodeup .build/dist/
-	(${SHASUMCMD} .build/dist/nodeup | cut -d' ' -f1) > .build/dist/nodeup.sha1
+	tools/sha1 .build/dist/nodeup .build/dist/nodeup.sha1
+	tools/sha256 .build/dist/nodeup .build/dist/nodeup.sha256
 
 .PHONY: dns-controller-gocode
 dns-controller-gocode:
@@ -461,6 +487,10 @@ utils-dist:
 	mkdir -p ${DIST}/linux/amd64/
 	docker run -v `pwd`/.build/dist/linux/amd64/:/dist utils-builder /extract.sh
 
+.PHONY: bazel-utils-dist
+bazel-utils-dist:
+	bazel build ${BAZEL_CONFIG} //images/utils-builder:utils
+
 # --------------------------------------------------
 # development targets
 
@@ -472,6 +502,8 @@ dep-prereqs:
 
 .PHONY: dep-ensure
 dep-ensure: dep-prereqs
+	echo "`make dep-ensure` has been replaced by `make gomod`"
+	exit 1
 	dep ensure -v
 	# Switch weavemesh to use peer_name_hash - bazel rule-go doesn't support build tags yet
 	rm vendor/github.com/weaveworks/mesh/peer_name_mac.go
@@ -482,30 +514,28 @@ dep-ensure: dep-prereqs
 	# Remove recursive symlinks that really confuse bazel
 	rm -rf vendor/github.com/coreos/etcd/cmd/
 	rm -rf vendor/github.com/jteeuwen/go-bindata/testdata/
-	# Remove depenencies that dep just can't figure out
+	# Remove dependencies that dep just can't figure out
 	rm -rf vendor/k8s.io/code-generator/cmd/set-gen/
 	rm -rf vendor/k8s.io/code-generator/cmd/go-to-protobuf/
 	rm -rf vendor/k8s.io/code-generator/cmd/import-boss/
 	rm -rf vendor/github.com/docker/docker/contrib/
-	make bazel-gazelle
+	make gazelle
+
+.PHONY: gomod
+gomod:
+	GO111MODULE=on go mod vendor
+	# Switch weavemesh to use peer_name_hash - bazel rule-go doesn't support build tags yet
+	rm vendor/github.com/weaveworks/mesh/peer_name_mac.go
+	sed -i -e 's/peer_name_hash/!peer_name_mac/g' vendor/github.com/weaveworks/mesh/peer_name_hash.go
+	# Remove all bazel build files that were vendored and regenerate (we assume they are go-gettable)
+	find vendor/ -name "BUILD" -delete
+	find vendor/ -name "BUILD.bazel" -delete
+	make gazelle
 
 
 .PHONY: gofmt
 gofmt:
-	gofmt -w -s channels/
-	gofmt -w -s cloudmock/
-	gofmt -w -s cmd/
-	gofmt -w -s examples/
-	gofmt -w -s nodeup/
-	gofmt -w -s util/
-	gofmt -w -s upup/pkg/
-	gofmt -w -s pkg/
-	gofmt -w -s tests/
-	gofmt -w -s protokube/cmd
-	gofmt -w -s protokube/pkg
-	gofmt -w -s protokube/tests
-	gofmt -w -s dns-controller/cmd
-	gofmt -w -s dns-controller/pkg
+	find $(MAKEDIR) -name "*.go" | grep -v vendor | xargs bazel run //:gofmt -- -w -s
 
 .PHONY: goimports
 goimports:
@@ -517,7 +547,7 @@ verify-goimports:
 
 .PHONY: govet
 govet: ${BINDATA_TARGETS}
-	go vet ${GOVETABLE_PACKAGES}
+	go vet ./...
 
 # --------------------------------------------------
 # Continuous integration targets
@@ -529,6 +559,10 @@ verify-boilerplate:
 .PHONY: verify-gofmt
 verify-gofmt:
 	hack/verify-gofmt.sh
+
+.PHONY: verify-gomod
+verify-gomod:
+	hack/verify-gomod
 
 .PHONY: verify-packages
 verify-packages: ${BINDATA_TARGETS}
@@ -554,12 +588,27 @@ verify-gendocs: ${KOPS}
 .PHONY: verify-bazel
 verify-bazel:
 	hack/verify-bazel.sh
-#
+
+.PHONY: verify-staticcheck
+verify-staticcheck:
+	hack/verify-staticcheck.sh
+
+# ci target is for developers, it aims to cover all the CI jobs
 # verify-gendocs will call kops target
 # verify-package has to be after verify-gendoc, because with .gitignore for federation bindata
 # it bombs in travis. verify-gendoc generates the bindata file.
 .PHONY: ci
-ci: govet verify-gofmt verify-boilerplate verify-bazel verify-misspelling nodeup examples test | verify-gendocs verify-packages verify-apimachinery
+ci: govet verify-gofmt verify-gomod verify-goimports verify-boilerplate verify-bazel verify-misspelling nodeup examples test | verify-gendocs verify-packages verify-apimachinery
+	echo "Done!"
+
+# travis-ci is the target that travis-ci calls
+# we skip tasks that rely on bazel and are covered by other jobs
+#  verify-gofmt: uses bazel, covered by pull-kops-verify-gofmt
+#  verify-bazel: uses bazel, covered by pull-kops-verify-bazel
+#  govet: covered by pull-kops-verify-govet
+#  verify-boilerplate: covered by pull-kops-verify-boilerplate
+.PHONY: travis-ci
+travis-ci: verify-misspelling nodeup examples test | verify-gendocs verify-packages verify-apimachinery
 	echo "Done!"
 
 .PHONY: pr
@@ -653,49 +702,49 @@ kops-server-push: kops-server-build
 
 .PHONY: bazel-test
 bazel-test:
-	bazel ${BAZEL_OPTIONS} test //cmd/... //pkg/... //channels/... //nodeup/... //protokube/... //dns-controller/... //tests/... //upup/... //util/... //hack:verify-all --test_output=errors
+	bazel ${BAZEL_OPTIONS} test ${BAZEL_CONFIG} --test_output=errors -- //... -//vendor/...
 
 .PHONY: bazel-build
 bazel-build:
-	bazel build --features=pure //cmd/... //pkg/... //channels/... //nodeup/... //protokube/... //dns-controller/... //util/...
+	bazel build ${BAZEL_CONFIG} --features=pure //cmd/... //pkg/... //channels/... //nodeup/... //protokube/... //dns-controller/... //util/...
 
 .PHONY: bazel-build-cli
 bazel-build-cli:
-	bazel build --features=pure //cmd/kops/...
+	bazel build ${BAZEL_CONFIG} --features=pure //cmd/kops/...
 
 .PHONY: bazel-crossbuild-kops
 bazel-crossbuild-kops:
-	bazel build --features=pure --platforms=@io_bazel_rules_go//go/toolchain:darwin_amd64 //cmd/kops/...
-	bazel build --features=pure --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //cmd/kops/...
-	bazel build --features=pure --platforms=@io_bazel_rules_go//go/toolchain:windows_amd64 //cmd/kops/...
+	bazel build ${BAZEL_CONFIG} --features=pure --platforms=@io_bazel_rules_go//go/toolchain:darwin_amd64 //cmd/kops/...
+	bazel build ${BAZEL_CONFIG} --features=pure --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //cmd/kops/...
+	bazel build ${BAZEL_CONFIG} --features=pure --platforms=@io_bazel_rules_go//go/toolchain:windows_amd64 //cmd/kops/...
 
 .PHONY: bazel-crossbuild-nodeup
 bazel-crossbuild-nodeup:
-	bazel build --features=pure --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //cmd/nodeup/...
+	bazel build ${BAZEL_CONFIG} --features=pure --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //cmd/nodeup/...
 
 .PHONY: bazel-crossbuild-protokube
 bazel-crossbuild-protokube:
-	bazel build --features=pure --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //protokube/...
+	bazel build ${BAZEL_CONFIG} --features=pure --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //protokube/...
 
 .PHONY: bazel-crossbuild-dns-controller
 bazel-crossbuild-dns-controller:
-	bazel build --features=pure --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //dns-controller/...
+	bazel build ${BAZEL_CONFIG} --features=pure --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //dns-controller/...
 
 .PHONY: bazel-crossbuild-dns-controller-image
 bazel-crossbuild-dns-controller-image:
-	bazel build --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //images:dns-controller.tar
+	bazel build ${BAZEL_CONFIG} --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //images:dns-controller.tar
 
 .PHONY: bazel-crossbuild-protokube-image
 bazel-crossbuild-protokube-image:
-	bazel build --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //images:protokube.tar
+	bazel build ${BAZEL_CONFIG} --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //images:protokube.tar
 
 .PHONY: bazel-crossbuild-kube-discovery-image
 bazel-crossbuild-kube-discovery-image:
-	bazel build --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //images:kube-discovery.tar
+	bazel build ${BAZEL_CONFIG} --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //images:kube-discovery.tar
 
 .PHONY: bazel-crossbuild-node-authorizer-image
 bazel-crossbuild-node-authorizer-image:
-	bazel build --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //images:node-authorizer.tar
+	bazel build ${BAZEL_CONFIG} --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //images:node-authorizer.tar
 
 .PHONY: bazel-push
 # Will always push a linux-based build up to the server
@@ -715,9 +764,13 @@ bazel-push-aws-run: bazel-push
 	ssh ${TARGET} chmod +x /tmp/nodeup
 	ssh -t ${TARGET} sudo SKIP_PACKAGE_UPDATE=1 /tmp/nodeup --conf=/var/cache/kubernetes-install/kube_env.yaml --v=8
 
-.PHONY: bazel-gazelle
-bazel-gazelle:
+.PHONY: gazelle
+gazelle:
 	hack/update-bazel.sh
+
+.PHONY: bazel-gazelle
+bazel-gazelle: gazelle
+	echo "bazel-gazelle is deprecated; please just use 'make gazelle'"
 
 .PHONY: check-markdown-links
 check-markdown-links:
@@ -733,59 +786,173 @@ check-markdown-links:
 
 .PHONY: push-kube-discovery
 push-kube-discovery:
-	bazel run //kube-discovery/images:kube-discovery
+	bazel run ${BAZEL_CONFIG} //kube-discovery/images:kube-discovery
 	docker tag bazel/kube-discovery/images:kube-discovery ${DOCKER_REGISTRY}/kube-discovery:${DOCKER_TAG}
 	docker push ${DOCKER_REGISTRY}/kube-discovery:${DOCKER_TAG}
 
 .PHONY: push-node-authorizer
 push-node-authorizer:
-	bazel run //node-authorizer/images:node-authorizer
+	bazel run ${BAZEL_CONFIG} //node-authorizer/images:node-authorizer
 	docker tag bazel/node-authorizer/images:node-authorizer ${DOCKER_REGISTRY}/node-authorizer:${DOCKER_TAG}
 	docker push ${DOCKER_REGISTRY}/node-authorizer:${DOCKER_TAG}
 
 .PHONY: bazel-protokube-export
 bazel-protokube-export:
 	mkdir -p ${BAZELIMAGES}
-	bazel build --action_env=PROTOKUBE_TAG=${PROTOKUBE_TAG} --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //images:protokube.tar
-	cp bazel-bin/images/protokube.tar ${BAZELIMAGES}/protokube.tar
-	gzip --force --fast ${BAZELIMAGES}/protokube.tar
-	(${SHASUMCMD} ${BAZELIMAGES}/protokube.tar.gz | cut -d' ' -f1) > ${BAZELIMAGES}/protokube.tar.gz.sha1
+	bazel build ${BAZEL_CONFIG} --action_env=PROTOKUBE_TAG=${PROTOKUBE_TAG} --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //images:protokube.tar.gz //images:protokube.tar.gz.sha1  //images:protokube.tar.gz.sha256
+	cp -fp bazel-bin/images/bazel-out/k8-fastbuild/bin/images/protokube.tar.gz ${BAZELIMAGES}/protokube.tar.gz
+	cp -fp bazel-bin/images/protokube.tar.gz.sha1 ${BAZELIMAGES}/protokube.tar.gz.sha1
+	cp -fp bazel-bin/images/protokube.tar.gz.sha256 ${BAZELIMAGES}/protokube.tar.gz.sha256
+
+.PHONY: bazel-kops-controller-export
+bazel-kops-controller-export:
+	mkdir -p ${BAZELIMAGES}
+	DOCKER_REGISTRY="" DOCKER_IMAGE_PREFIX="kope/" KOPS_CONTROLLER_TAG=${KOPS_CONTROLLER_TAG} bazel build ${BAZEL_CONFIG} --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //cmd/kops-controller:image-bundle.tar
+	cp -fp bazel-bin/cmd/kops-controller/image-bundle.tar ${BAZELIMAGES}/kops-controller.tar
+	gzip --force --fast ${BAZELIMAGES}/kops-controller.tar
+	tools/sha1 ${BAZELIMAGES}/kops-controller.tar.gz ${BAZELIMAGES}/kops-controller.tar.gz.sha1
+	tools/sha256 ${BAZELIMAGES}/kops-controller.tar.gz ${BAZELIMAGES}/kops-controller.tar.gz.sha256
+
+.PHONY: bazel-dns-controller-export
+bazel-dns-controller-export:
+	mkdir -p ${BAZELIMAGES}
+	DOCKER_REGISTRY="" DOCKER_IMAGE_PREFIX="kope/" DNS_CONTROLLER_TAG=${DNS_CONTROLLER_TAG} bazel build ${BAZEL_CONFIG} --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //dns-controller/cmd/dns-controller:image-bundle.tar
+	cp -fp bazel-bin/dns-controller/cmd/dns-controller/image-bundle.tar ${BAZELIMAGES}/dns-controller.tar
+	gzip --force --fast ${BAZELIMAGES}/dns-controller.tar
+	tools/sha1 ${BAZELIMAGES}/dns-controller.tar.gz ${BAZELIMAGES}/dns-controller.tar.gz.sha1
+	tools/sha256 ${BAZELIMAGES}/dns-controller.tar.gz ${BAZELIMAGES}/dns-controller.tar.gz.sha256
 
 .PHONY: bazel-version-dist
-bazel-version-dist: bazel-crossbuild-nodeup bazel-crossbuild-kops bazel-protokube-export utils-dist
+bazel-version-dist: bazel-crossbuild-nodeup bazel-crossbuild-kops bazel-kops-controller-export bazel-dns-controller-export bazel-protokube-export bazel-utils-dist
 	rm -rf ${BAZELUPLOAD}
 	mkdir -p ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/
 	mkdir -p ${BAZELUPLOAD}/kops/${VERSION}/darwin/amd64/
+	mkdir -p ${BAZELUPLOAD}/kops/${VERSION}/windows/amd64/
 	mkdir -p ${BAZELUPLOAD}/kops/${VERSION}/images/
 	mkdir -p ${BAZELUPLOAD}/utils/${VERSION}/linux/amd64/
 	cp bazel-bin/cmd/nodeup/linux_amd64_pure_stripped/nodeup ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/nodeup
-	(${SHASUMCMD} ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/nodeup | cut -d' ' -f1) > ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/nodeup.sha1
+	tools/sha1 ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/nodeup ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/nodeup.sha1
+	tools/sha256 ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/nodeup ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/nodeup.sha256
 	cp ${BAZELIMAGES}/protokube.tar.gz ${BAZELUPLOAD}/kops/${VERSION}/images/protokube.tar.gz
 	cp ${BAZELIMAGES}/protokube.tar.gz.sha1 ${BAZELUPLOAD}/kops/${VERSION}/images/protokube.tar.gz.sha1
+	cp ${BAZELIMAGES}/protokube.tar.gz.sha256 ${BAZELUPLOAD}/kops/${VERSION}/images/protokube.tar.gz.sha256
+	cp ${BAZELIMAGES}/kops-controller.tar.gz ${BAZELUPLOAD}/kops/${VERSION}/images/kops-controller.tar.gz
+	cp ${BAZELIMAGES}/kops-controller.tar.gz.sha1 ${BAZELUPLOAD}/kops/${VERSION}/images/kops-controller.tar.gz.sha1
+	cp ${BAZELIMAGES}/kops-controller.tar.gz.sha256 ${BAZELUPLOAD}/kops/${VERSION}/images/kops-controller.tar.gz.sha256
+	cp ${BAZELIMAGES}/dns-controller.tar.gz ${BAZELUPLOAD}/kops/${VERSION}/images/dns-controller.tar.gz
+	cp ${BAZELIMAGES}/dns-controller.tar.gz.sha1 ${BAZELUPLOAD}/kops/${VERSION}/images/dns-controller.tar.gz.sha1
+	cp ${BAZELIMAGES}/dns-controller.tar.gz.sha256 ${BAZELUPLOAD}/kops/${VERSION}/images/dns-controller.tar.gz.sha256
 	cp bazel-bin/cmd/kops/linux_amd64_pure_stripped/kops ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/kops
-	(${SHASUMCMD} ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/kops | cut -d' ' -f1) > ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/kops.sha1
+	tools/sha1 ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/kops ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/kops.sha1
+	tools/sha256 ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/kops ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/kops.sha256
 	cp bazel-bin/cmd/kops/darwin_amd64_pure_stripped/kops ${BAZELUPLOAD}/kops/${VERSION}/darwin/amd64/kops
-	(${SHASUMCMD} ${BAZELUPLOAD}/kops/${VERSION}/darwin/amd64/kops | cut -d' ' -f1) > ${BAZELUPLOAD}/kops/${VERSION}/darwin/amd64/kops.sha1
-	cp ${DIST}/linux/amd64/utils.tar.gz ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/utils.tar.gz
-	cp ${DIST}/linux/amd64/utils.tar.gz.sha1 ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/utils.tar.gz.sha1
+	tools/sha1 ${BAZELUPLOAD}/kops/${VERSION}/darwin/amd64/kops ${BAZELUPLOAD}/kops/${VERSION}/darwin/amd64/kops.sha1
+	tools/sha256 ${BAZELUPLOAD}/kops/${VERSION}/darwin/amd64/kops ${BAZELUPLOAD}/kops/${VERSION}/darwin/amd64/kops.sha256
+	cp bazel-bin/cmd/kops/windows_amd64_pure_stripped/kops.exe ${BAZELUPLOAD}/kops/${VERSION}/windows/amd64/kops.exe
+	tools/sha1 ${BAZELUPLOAD}/kops/${VERSION}/windows/amd64/kops.exe ${BAZELUPLOAD}/kops/${VERSION}/windows/amd64/kops.exe.sha1
+	tools/sha256 ${BAZELUPLOAD}/kops/${VERSION}/windows/amd64/kops.exe ${BAZELUPLOAD}/kops/${VERSION}/windows/amd64/kops.exe.sha256
+	cp bazel-bin/images/utils-builder/utils.tar.gz ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/utils.tar.gz
+	tools/sha1 ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/utils.tar.gz ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/utils.tar.gz.sha1
+	tools/sha256 ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/utils.tar.gz ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/utils.tar.gz.sha256
+	cp -fr ${BAZELUPLOAD}/kops/${VERSION}/* ${BAZELDIST}/
 
 .PHONY: bazel-upload
 bazel-upload: bazel-version-dist # Upload kops to S3
 	aws s3 sync --acl public-read ${BAZELUPLOAD}/ ${S3_BUCKET}
 
-#-----------------------------------------------------------  
-# static html documentation  
+# prow-postsubmit is run by the prow postsubmit job
+# It uploads a build to a staging directory, which in theory we can publish as a release
+.PHONY: prow-postsubmit
+prow-postsubmit: bazel-version-dist
+	${UPLOAD_CMD} ${BAZELUPLOAD}/kops/${VERSION}/ ${UPLOAD_DEST}/${KOPS_RELEASE_VERSION}-${GITSHA}/
+
+#-----------------------------------------------------------
+# static html documentation
 
 .PHONY: live-docs
 live-docs:
-	@docker run --rm -it -p 3000:3000 -v ${PWD}:/docs aledbf/mkdocs:0.1
+	@docker build -t kops/mkdocs images/mkdocs
+	@docker run --rm -it -p 3000:3000 -v ${PWD}:/docs kops/mkdocs
 
 .PHONY: build-docs
 build-docs:
-	@docker run --rm -it -v ${PWD}:/docs aledbf/mkdocs:0.1 build
+	@docker build --pull -t kops/mkdocs images/mkdocs
+	@docker run --rm -v ${PWD}:/docs kops/mkdocs build
 
+.PHONY: build-docs-netlify
+build-docs-netlify:
+	@pip install -r ${MAKEDIR}/images/mkdocs/requirements.txt
+	@mkdocs build
+
+# Update machine_types.go
 .PHONY: update-machine-types
-update-machine-types: #Update machine_types.go
+update-machine-types:
 	go build -o hack/machine_types/machine_types  ${KOPS_ROOT}/hack/machine_types/
 	hack/machine_types/machine_types --out upup/pkg/fi/cloudup/awsup/machine_types.go
 	go fmt upup/pkg/fi/cloudup/awsup/machine_types.go
+
+#-----------------------------------------------------------
+# development targets
+
+# dev-upload-nodeup uploads nodeup to GCS
+.PHONY: dev-upload-nodeup
+dev-upload-nodeup: bazel-crossbuild-nodeup
+	mkdir -p ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/
+	cp -fp bazel-bin/cmd/nodeup/linux_amd64_pure_stripped/nodeup ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/nodeup
+	tools/sha1 ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/nodeup ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/nodeup.sha1
+	tools/sha256 ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/nodeup ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/nodeup.sha256
+	${UPLOAD_CMD} ${BAZELUPLOAD}/ ${UPLOAD_DEST}
+
+# dev-upload-protokube uploads protokube to GCS
+.PHONY: dev-upload-protokube
+dev-upload-protokube: bazel-protokube-export # Upload kops to GCS
+	mkdir -p ${BAZELUPLOAD}/kops/${VERSION}/images/
+	cp -fp ${BAZELIMAGES}/protokube.tar.gz ${BAZELUPLOAD}/kops/${VERSION}/images/protokube.tar.gz
+	cp -fp ${BAZELIMAGES}/protokube.tar.gz.sha1 ${BAZELUPLOAD}/kops/${VERSION}/images/protokube.tar.gz.sha1
+	cp -fp ${BAZELIMAGES}/protokube.tar.gz.sha256 ${BAZELUPLOAD}/kops/${VERSION}/images/protokube.tar.gz.sha256
+	${UPLOAD_CMD} ${BAZELUPLOAD}/ ${UPLOAD_DEST}
+
+# dev-upload-kops-controller uploads kops-controller to GCS
+.PHONY: dev-upload-kops-controller
+dev-upload-kops-controller: bazel-kops-controller-export # Upload kops to GCS
+	mkdir -p ${BAZELUPLOAD}/kops/${VERSION}/images/
+	cp -fp ${BAZELIMAGES}/kops-controller.tar.gz ${BAZELUPLOAD}/kops/${VERSION}/images/kops-controller.tar.gz
+	cp -fp ${BAZELIMAGES}/kops-controller.tar.gz.sha1 ${BAZELUPLOAD}/kops/${VERSION}/images/kops-controller.tar.gz.sha1
+	cp -fp ${BAZELIMAGES}/kops-controller.tar.gz.sha256 ${BAZELUPLOAD}/kops/${VERSION}/images/kops-controller.tar.gz.sha256
+	${UPLOAD_CMD} ${BAZELUPLOAD}/ ${UPLOAD_DEST}
+
+# dev-upload-dns-controller uploads dns-controller to GCS
+.PHONY: dev-upload-dns-controller
+dev-upload-dns-controller: bazel-dns-controller-export # Upload kops to GCS
+	mkdir -p ${BAZELUPLOAD}/kops/${VERSION}/images/
+	cp -fp ${BAZELIMAGES}/dns-controller.tar.gz ${BAZELUPLOAD}/kops/${VERSION}/images/dns-controller.tar.gz
+	cp -fp ${BAZELIMAGES}/dns-controller.tar.gz.sha1 ${BAZELUPLOAD}/kops/${VERSION}/images/dns-controller.tar.gz.sha1
+	cp -fp ${BAZELIMAGES}/dns-controller.tar.gz.sha256 ${BAZELUPLOAD}/kops/${VERSION}/images/dns-controller.tar.gz.sha256
+	${UPLOAD_CMD} ${BAZELUPLOAD}/ ${UPLOAD_DEST}
+
+# dev-copy-utils copies utils from a recent release
+# We don't currently have a bazel build for them, and the build is pretty slow, but they change rarely.
+.PHONE: dev-copy-utils
+dev-copy-utils:
+	mkdir -p ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/
+	cd ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/; wget -N https://kubeupv2.s3.amazonaws.com/kops/1.15.0-alpha.1/linux/amd64/utils.tar.gz
+	cd ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/; wget -N https://kubeupv2.s3.amazonaws.com/kops/1.15.0-alpha.1/linux/amd64/utils.tar.gz.sha1
+	cd ${BAZELUPLOAD}/kops/${VERSION}/linux/amd64/; wget -N https://kubeupv2.s3.amazonaws.com/kops/1.15.0-alpha.1/linux/amd64/utils.tar.gz.sha256
+	${UPLOAD_CMD} ${BAZELUPLOAD}/ ${UPLOAD_DEST}
+
+# dev-upload does a faster build and uploads to GCS / S3
+# It copies utils instead of building it
+.PHONY: dev-upload
+dev-upload: dev-upload-nodeup dev-upload-protokube dev-upload-dns-controller dev-upload-kops-controller dev-copy-utils
+	echo "Done"
+
+.PHONY: crds
+crds:
+	go run vendor/sigs.k8s.io/controller-tools/cmd/controller-gen/main.go crd paths=k8s.io/kops/pkg/apis/kops/v1alpha2 output:dir=k8s/crds/
+
+#------------------------------------------------------
+# kops-controller
+
+.PHONY: kops-controller-push
+kops-controller-push:
+	DOCKER_REGISTRY=${DOCKER_REGISTRY} DOCKER_IMAGE_PREFIX=${DOCKER_IMAGE_PREFIX} KOPS_CONTROLLER_TAG=${KOPS_CONTROLLER_TAG} bazel run --platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 //cmd/kops-controller:push-image

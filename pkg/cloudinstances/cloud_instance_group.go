@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/golang/glog"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/klog"
 	"k8s.io/kops/pkg/apis/kops"
 	api "k8s.io/kops/pkg/apis/kops"
 )
@@ -63,7 +63,7 @@ func (c *CloudInstanceGroup) NewCloudInstanceGroupMember(instanceId string, newG
 	if node != nil {
 		cm.Node = node
 	} else {
-		glog.V(8).Infof("unable to find node for instance: %s", instanceId)
+		klog.V(8).Infof("unable to find node for instance: %s", instanceId)
 	}
 
 	if newGroupName == currentGroupName {

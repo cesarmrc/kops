@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,12 +24,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang/glog"
 	"github.com/spf13/cobra"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/klog"
 	"k8s.io/kops/cmd/kops/util"
 	api "k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/cloudinstances"
@@ -38,9 +39,8 @@ import (
 	"k8s.io/kops/pkg/pretty"
 	"k8s.io/kops/upup/pkg/fi/cloudup"
 	"k8s.io/kops/util/pkg/tables"
-	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
-	"k8s.io/kubernetes/pkg/kubectl/genericclioptions"
 	"k8s.io/kubernetes/pkg/kubectl/util/i18n"
+	"k8s.io/kubernetes/pkg/kubectl/util/templates"
 )
 
 var (
@@ -151,14 +151,13 @@ func (o *RollingUpdateOptions) InitDefaults() {
 	o.FailOnDrainError = false
 	o.FailOnValidate = true
 
-	o.MasterInterval = 5 * time.Minute
-	o.NodeInterval = 4 * time.Minute
-	o.BastionInterval = 5 * time.Minute
+	o.MasterInterval = 15 * time.Second
+	o.NodeInterval = 15 * time.Second
+	o.BastionInterval = 15 * time.Second
 	o.Interactive = false
 
-	o.PostDrainDelay = 90 * time.Second
-	o.ValidationTimeout = 5 * time.Minute
-
+	o.PostDrainDelay = 5 * time.Second
+	o.ValidationTimeout = 15 * time.Minute
 }
 
 func NewCmdRollingUpdateCluster(f *util.Factory, out io.Writer) *cobra.Command {
@@ -177,9 +176,11 @@ func NewCmdRollingUpdateCluster(f *util.Factory, out io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&options.Force, "force", options.Force, "Force rolling update, even if no changes")
 	cmd.Flags().BoolVar(&options.CloudOnly, "cloudonly", options.CloudOnly, "Perform rolling update without confirming progress with k8s")
 
+	cmd.Flags().DurationVar(&options.ValidationTimeout, "validation-timeout", options.ValidationTimeout, "Maximum time to wait for a cluster to validate")
 	cmd.Flags().DurationVar(&options.MasterInterval, "master-interval", options.MasterInterval, "Time to wait between restarting masters")
 	cmd.Flags().DurationVar(&options.NodeInterval, "node-interval", options.NodeInterval, "Time to wait between restarting nodes")
 	cmd.Flags().DurationVar(&options.BastionInterval, "bastion-interval", options.BastionInterval, "Time to wait between restarting bastions")
+	cmd.Flags().DurationVar(&options.PostDrainDelay, "post-drain-delay", options.PostDrainDelay, "Time to wait after draining each node")
 	cmd.Flags().BoolVarP(&options.Interactive, "interactive", "i", options.Interactive, "Prompt to continue after each instance is updated")
 	cmd.Flags().StringSliceVar(&options.InstanceGroups, "instance-group", options.InstanceGroups, "List of instance groups to update (defaults to all if not specified)")
 	cmd.Flags().StringSliceVar(&options.InstanceGroupRoles, "instance-group-roles", options.InstanceGroupRoles, "If specified, only instance groups of the specified role will be updated (e.g. Master,Node,Bastion)")
@@ -228,7 +229,7 @@ func RunRollingUpdateCluster(f *util.Factory, out io.Writer, options *RollingUpd
 	}
 
 	contextName := cluster.ObjectMeta.Name
-	clientGetter := genericclioptions.NewConfigFlags()
+	clientGetter := genericclioptions.NewConfigFlags(true)
 	clientGetter.Context = &contextName
 
 	config, err := clientGetter.ToRESTConfig()
@@ -387,7 +388,7 @@ func RunRollingUpdateCluster(f *util.Factory, out io.Writer, options *RollingUpd
 	}
 
 	if featureflag.DrainAndValidateRollingUpdate.Enabled() {
-		glog.V(2).Infof("Rolling update with drain and validate enabled.")
+		klog.V(2).Infof("Rolling update with drain and validate enabled.")
 	}
 	d := &instancegroups.RollingUpdateCluster{
 		MasterInterval:    options.MasterInterval,
@@ -397,7 +398,6 @@ func RunRollingUpdateCluster(f *util.Factory, out io.Writer, options *RollingUpd
 		Force:             options.Force,
 		Cloud:             cloud,
 		K8sClient:         k8sClient,
-		ClientGetter:      clientGetter,
 		FailOnDrainError:  options.FailOnDrainError,
 		FailOnValidate:    options.FailOnValidate,
 		CloudOnly:         options.CloudOnly,

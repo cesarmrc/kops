@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -25,11 +25,11 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/golang/glog"
 	"github.com/spotinst/spotinst-sdk-go/service/elastigroup/providers/aws"
 	"github.com/spotinst/spotinst-sdk-go/spotinst/client"
 	"github.com/spotinst/spotinst-sdk-go/spotinst/util/stringutil"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog"
 	"k8s.io/kops/pkg/resources/spotinst"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awstasks"
@@ -46,9 +46,10 @@ type Elastigroup struct {
 	ID                       *string
 	MinSize                  *int64
 	MaxSize                  *int64
-	Risk                     *float64
+	SpotPercentage           *float64
 	UtilizeReservedInstances *bool
 	FallbackToOnDemand       *bool
+	HealthCheckType          *string
 	Product                  *string
 	Orientation              *string
 	Tags                     map[string]string
@@ -63,14 +64,36 @@ type Elastigroup struct {
 	SecurityGroups           []*awstasks.SecurityGroup
 	Monitoring               *bool
 	AssociatePublicIP        *bool
-	RootVolumeSize           *int64
-	RootVolumeType           *string
-	RootVolumeIOPS           *int64
-	RootVolumeOptimization   *bool
 	Tenancy                  *string
-	AutoScalerEnabled        *bool
-	AutoScalerClusterID      *string
-	AutoScalerNodeLabels     map[string]string
+	RootVolumeOpts           *RootVolumeOpts
+	AutoScalerOpts           *AutoScalerOpts
+}
+
+type RootVolumeOpts struct {
+	Type         *string
+	Size         *int32
+	IOPS         *int32
+	Optimization *bool
+}
+
+type AutoScalerOpts struct {
+	Enabled   *bool
+	ClusterID *string
+	Labels    map[string]string
+	Headroom  *AutoScalerHeadroomOpts
+	Down      *AutoScalerDownOpts
+}
+
+type AutoScalerHeadroomOpts struct {
+	CPUPerUnit *int
+	GPUPerUnit *int
+	MemPerUnit *int
+	NumOfUnits *int
+}
+
+type AutoScalerDownOpts struct {
+	MaxPercentage     *int
+	EvaluationPeriods *int
 }
 
 var _ fi.CompareWithID = &Elastigroup{}
@@ -79,7 +102,41 @@ func (e *Elastigroup) CompareWithID() *string {
 	return e.Name
 }
 
-func (e *Elastigroup) find(svc spotinst.Service, name string) (*aws.Group, error) {
+var _ fi.HasDependencies = &Elastigroup{}
+
+func (e *Elastigroup) GetDependencies(tasks map[string]fi.Task) []fi.Task {
+	var deps []fi.Task
+
+	if e.IAMInstanceProfile != nil {
+		deps = append(deps, e.IAMInstanceProfile)
+	}
+
+	if e.LoadBalancer != nil {
+		deps = append(deps, e.LoadBalancer)
+	}
+
+	if e.SSHKey != nil {
+		deps = append(deps, e.SSHKey)
+	}
+
+	if e.Subnets != nil {
+		for _, subnet := range e.Subnets {
+			deps = append(deps, subnet)
+		}
+	}
+
+	if e.SecurityGroups != nil {
+		for _, sg := range e.SecurityGroups {
+			deps = append(deps, sg)
+		}
+	}
+
+	return deps
+}
+
+func (e *Elastigroup) find(svc spotinst.InstanceGroupService, name string) (*aws.Group, error) {
+	klog.V(4).Infof("Attempting to find Elastigroup: %q", name)
+
 	groups, err := svc.List(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("spotinst: failed to find elastigroup %s: %v", name, err)
@@ -96,6 +153,7 @@ func (e *Elastigroup) find(svc spotinst.Service, name string) (*aws.Group, error
 		return nil, fmt.Errorf("spotinst: failed to find elastigroup %q", name)
 	}
 
+	klog.V(4).Infof("Elastigroup/%s: %s", name, stringutil.Stringify(out))
 	return out, nil
 }
 
@@ -104,20 +162,28 @@ var _ fi.HasCheckExisting = &Elastigroup{}
 func (e *Elastigroup) Find(c *fi.Context) (*Elastigroup, error) {
 	cloud := c.Cloud.(awsup.AWSCloud)
 
-	group, err := e.find(cloud.Spotinst(), *e.Name)
+	group, err := e.find(cloud.Spotinst().Elastigroup(), *e.Name)
 	if err != nil {
 		return nil, err
-	}
-	if group == nil {
-		return nil, nil
 	}
 
 	actual := &Elastigroup{}
 	actual.ID = group.ID
 	actual.Name = group.Name
-	actual.MinSize = fi.Int64(int64(fi.IntValue(group.Capacity.Minimum)))
-	actual.MaxSize = fi.Int64(int64(fi.IntValue(group.Capacity.Maximum)))
-	actual.Orientation = group.Strategy.AvailabilityVsCost
+
+	// Capacity.
+	{
+		actual.MinSize = fi.Int64(int64(fi.IntValue(group.Capacity.Minimum)))
+		actual.MaxSize = fi.Int64(int64(fi.IntValue(group.Capacity.Maximum)))
+	}
+
+	// Strategy.
+	{
+		actual.SpotPercentage = group.Strategy.Risk
+		actual.Orientation = group.Strategy.AvailabilityVsCost
+		actual.FallbackToOnDemand = group.Strategy.FallbackToOnDemand
+		actual.UtilizeReservedInstances = group.Strategy.UtilizeReservedInstances
+	}
 
 	// Compute.
 	{
@@ -134,7 +200,8 @@ func (e *Elastigroup) Find(c *fi.Context) (*Elastigroup, error) {
 		{
 			for _, zone := range compute.AvailabilityZones {
 				if zone.SubnetID != nil {
-					actual.Subnets = append(actual.Subnets, &awstasks.Subnet{ID: zone.SubnetID})
+					actual.Subnets = append(actual.Subnets,
+						&awstasks.Subnet{ID: zone.SubnetID})
 				}
 			}
 			if subnetSlicesEqualIgnoreOrder(actual.Subnets, e.Subnets) {
@@ -143,53 +210,84 @@ func (e *Elastigroup) Find(c *fi.Context) (*Elastigroup, error) {
 		}
 	}
 
-	// Launch Specification.
+	// Launch specification.
 	{
 		lc := group.Compute.LaunchSpecification
 
 		// Image.
 		{
-			image, err := resolveImage(cloud, fi.StringValue(lc.ImageID))
-			if err != nil {
-				return nil, err
+			actual.ImageID = lc.ImageID
+
+			if e.ImageID != nil && actual.ImageID != nil &&
+				fi.StringValue(actual.ImageID) != fi.StringValue(e.ImageID) {
+				image, err := resolveImage(cloud, fi.StringValue(e.ImageID))
+				if err != nil {
+					return nil, err
+				}
+				if fi.StringValue(image.ImageId) == fi.StringValue(lc.ImageID) {
+					actual.ImageID = e.ImageID
+				}
 			}
-			actual.ImageID = image.Name
 		}
 
 		// Tags.
 		{
-			if len(lc.Tags) > 0 {
+			if lc.Tags != nil && len(lc.Tags) > 0 {
 				actual.Tags = make(map[string]string)
 				for _, tag := range lc.Tags {
-					actual.Tags[*tag.Key] = *tag.Value
+					actual.Tags[fi.StringValue(tag.Key)] = fi.StringValue(tag.Value)
 				}
 			}
 		}
 
 		// Security groups.
 		{
-			for _, sg := range lc.SecurityGroupIDs {
-				actual.SecurityGroups = append(actual.SecurityGroups, &awstasks.SecurityGroup{ID: fi.String(sg)})
+			if lc.SecurityGroupIDs != nil {
+				for _, sgID := range lc.SecurityGroupIDs {
+					actual.SecurityGroups = append(actual.SecurityGroups,
+						&awstasks.SecurityGroup{ID: fi.String(sgID)})
+				}
 			}
 		}
 
-		// Block device mappings.
+		// Root volume options.
 		{
-			for _, b := range lc.BlockDeviceMappings {
-				if b.EBS == nil || b.EBS.SnapshotID != nil {
-					// Not the root.
-					continue
+			// Block device mappings.
+			{
+				if lc.BlockDeviceMappings != nil {
+					for _, b := range lc.BlockDeviceMappings {
+						if b.EBS == nil || b.EBS.SnapshotID != nil {
+							continue // not the root
+						}
+						if actual.RootVolumeOpts == nil {
+							actual.RootVolumeOpts = new(RootVolumeOpts)
+						}
+						if b.EBS.IOPS != nil {
+							actual.RootVolumeOpts.IOPS = fi.Int32(int32(fi.IntValue(b.EBS.IOPS)))
+						}
+
+						actual.RootVolumeOpts.Type = b.EBS.VolumeType
+						actual.RootVolumeOpts.Size = fi.Int32(int32(fi.IntValue(b.EBS.VolumeSize)))
+					}
 				}
-				actual.RootVolumeType = b.EBS.VolumeType
-				actual.RootVolumeSize = fi.Int64(int64(fi.IntValue(b.EBS.VolumeSize)))
-				actual.RootVolumeIOPS = fi.Int64(int64(fi.IntValue(b.EBS.IOPS)))
+			}
+
+			// EBS optimization.
+			{
+				if lc.EBSOptimized != nil {
+					if actual.RootVolumeOpts == nil {
+						actual.RootVolumeOpts = new(RootVolumeOpts)
+					}
+
+					actual.RootVolumeOpts.Optimization = lc.EBSOptimized
+				}
 			}
 		}
 
 		// User data.
 		{
 			if lc.UserData != nil {
-				userData, err := base64.StdEncoding.DecodeString(*lc.UserData)
+				userData, err := base64.StdEncoding.DecodeString(fi.StringValue(lc.UserData))
 				if err != nil {
 					return nil, err
 				}
@@ -200,7 +298,7 @@ func (e *Elastigroup) Find(c *fi.Context) (*Elastigroup, error) {
 		// Network interfaces.
 		{
 			associatePublicIP := false
-			if len(lc.NetworkInterfaces) > 0 {
+			if lc.NetworkInterfaces != nil && len(lc.NetworkInterfaces) > 0 {
 				for _, iface := range lc.NetworkInterfaces {
 					if fi.BoolValue(iface.AssociatePublicIPAddress) {
 						associatePublicIP = true
@@ -211,25 +309,89 @@ func (e *Elastigroup) Find(c *fi.Context) (*Elastigroup, error) {
 			actual.AssociatePublicIP = fi.Bool(associatePublicIP)
 		}
 
-		if lc.LoadBalancersConfig != nil {
-			if lbs := lc.LoadBalancersConfig.LoadBalancers; len(lbs) > 0 {
-				actual.LoadBalancer = &awstasks.LoadBalancer{
-					Name:             lbs[0].Name,
-					LoadBalancerName: lbs[0].Name,
+		// Load balancer.
+		{
+			if lc.LoadBalancersConfig != nil && len(lc.LoadBalancersConfig.LoadBalancers) > 0 {
+				lbs := lc.LoadBalancersConfig.LoadBalancers
+				actual.LoadBalancer = &awstasks.LoadBalancer{Name: lbs[0].Name}
+
+				if e.LoadBalancer != nil && actual.LoadBalancer != nil &&
+					fi.StringValue(actual.LoadBalancer.Name) != fi.StringValue(e.LoadBalancer.Name) {
+					elb, err := awstasks.FindLoadBalancerByNameTag(cloud, fi.StringValue(e.LoadBalancer.Name))
+					if err != nil {
+						return nil, err
+					}
+					if fi.StringValue(elb.LoadBalancerName) == fi.StringValue(lbs[0].Name) {
+						actual.LoadBalancer = e.LoadBalancer
+					}
 				}
 			}
 		}
 
+		// IAM instance profile.
 		if lc.IAMInstanceProfile != nil {
 			actual.IAMInstanceProfile = &awstasks.IAMInstanceProfile{Name: lc.IAMInstanceProfile.Name}
 		}
 
+		// SSH key.
 		if lc.KeyPair != nil {
 			actual.SSHKey = &awstasks.SSHKey{Name: lc.KeyPair}
 		}
 
+		// Tenancy.
 		if lc.Tenancy != nil {
 			actual.Tenancy = lc.Tenancy
+		}
+
+		// Monitoring.
+		if lc.Monitoring != nil {
+			actual.Monitoring = lc.Monitoring
+		}
+
+		// Health check.
+		if lc.HealthCheckType != nil {
+			actual.HealthCheckType = lc.HealthCheckType
+		}
+	}
+
+	// Auto Scaler.
+	{
+		if group.Integration != nil && group.Integration.Kubernetes != nil {
+			integration := group.Integration.Kubernetes
+
+			actual.AutoScalerOpts = new(AutoScalerOpts)
+			actual.AutoScalerOpts.ClusterID = integration.ClusterIdentifier
+
+			if integration.AutoScale != nil {
+				actual.AutoScalerOpts.Enabled = integration.AutoScale.IsEnabled
+
+				// Headroom.
+				if headroom := integration.AutoScale.Headroom; headroom != nil {
+					actual.AutoScalerOpts.Headroom = &AutoScalerHeadroomOpts{
+						CPUPerUnit: headroom.CPUPerUnit,
+						GPUPerUnit: headroom.GPUPerUnit,
+						MemPerUnit: headroom.MemoryPerUnit,
+						NumOfUnits: headroom.NumOfUnits,
+					}
+				}
+
+				// Scale down.
+				if down := integration.AutoScale.Down; down != nil {
+					actual.AutoScalerOpts.Down = &AutoScalerDownOpts{
+						MaxPercentage:     down.MaxScaleDownPercentage,
+						EvaluationPeriods: down.EvaluationPeriods,
+					}
+				}
+
+				// Labels.
+				if labels := integration.AutoScale.Labels; labels != nil {
+					actual.AutoScalerOpts.Labels = make(map[string]string)
+
+					for _, label := range labels {
+						actual.AutoScalerOpts.Labels[fi.StringValue(label.Key)] = fi.StringValue(label.Value)
+					}
+				}
+			}
 		}
 	}
 
@@ -241,7 +403,7 @@ func (e *Elastigroup) Find(c *fi.Context) (*Elastigroup, error) {
 
 func (e *Elastigroup) CheckExisting(c *fi.Context) bool {
 	cloud := c.Cloud.(awsup.AWSCloud)
-	group, err := e.find(cloud.Spotinst(), *e.Name)
+	group, err := e.find(cloud.Spotinst().Elastigroup(), *e.Name)
 	return err == nil && group != nil
 }
 
@@ -250,16 +412,8 @@ func (e *Elastigroup) Run(c *fi.Context) error {
 }
 
 func (s *Elastigroup) CheckChanges(a, e, changes *Elastigroup) error {
-	if e.ImageID == nil {
-		return fi.RequiredField("ImageID")
-	}
-	if e.OnDemandInstanceType == nil {
-		return fi.RequiredField("OnDemandInstanceType")
-	}
-	if a != nil {
-		if e.Name == nil {
-			return fi.RequiredField("Name")
-		}
+	if e.Name == nil {
+		return fi.RequiredField("Name")
 	}
 	return nil
 }
@@ -277,7 +431,7 @@ func (eg *Elastigroup) createOrUpdate(cloud awsup.AWSCloud, a, e, changes *Elast
 }
 
 func (_ *Elastigroup) create(cloud awsup.AWSCloud, a, e, changes *Elastigroup) error {
-	glog.V(2).Infof("Creating elastigroup %q", *e.Name)
+	klog.V(2).Infof("Creating Elastigroup %q", *e.Name)
 	e.applyDefaults()
 
 	group := &aws.Group{
@@ -304,7 +458,7 @@ func (_ *Elastigroup) create(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 	// Strategy.
 	{
-		group.Strategy.SetRisk(e.Risk)
+		group.Strategy.SetRisk(e.SpotPercentage)
 		group.Strategy.SetAvailabilityVsCost(fi.String(string(normalizeOrientation(e.Orientation))))
 		group.Strategy.SetFallbackToOnDemand(e.FallbackToOnDemand)
 		group.Strategy.SetUtilizeReservedInstances(e.UtilizeReservedInstances)
@@ -367,7 +521,7 @@ func (_ *Elastigroup) create(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 				}
 			}
 
-			// Image ID.
+			// Image.
 			{
 				image, err := resolveImage(cloud, fi.StringValue(e.ImageID))
 				if err != nil {
@@ -390,30 +544,35 @@ func (_ *Elastigroup) create(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 			// IAM instance profile.
 			{
-				iprof := new(aws.IAMInstanceProfile)
-				iprof.SetName(e.IAMInstanceProfile.GetName())
-				group.Compute.LaunchSpecification.SetIAMInstanceProfile(iprof)
+				if e.IAMInstanceProfile != nil {
+					iprof := new(aws.IAMInstanceProfile)
+					iprof.SetName(e.IAMInstanceProfile.GetName())
+					group.Compute.LaunchSpecification.SetIAMInstanceProfile(iprof)
+				}
 			}
 
 			// Security groups.
 			{
-				securityGroupIDs := make([]string, len(e.SecurityGroups))
-				for i, sg := range e.SecurityGroups {
-					securityGroupIDs[i] = *sg.ID
+				if e.SecurityGroups != nil {
+					securityGroupIDs := make([]string, len(e.SecurityGroups))
+					for i, sg := range e.SecurityGroups {
+						securityGroupIDs[i] = *sg.ID
+					}
+					group.Compute.LaunchSpecification.SetSecurityGroupIDs(securityGroupIDs)
 				}
-				group.Compute.LaunchSpecification.SetSecurityGroupIDs(securityGroupIDs)
 			}
 
 			// Public IP.
 			{
-				if *e.AssociatePublicIP {
-					iface := new(aws.NetworkInterface)
-					iface.SetDeviceIndex(fi.Int(0))
-					iface.SetAssociatePublicIPAddress(fi.Bool(true))
-					iface.SetDeleteOnTermination(fi.Bool(true))
-					group.Compute.LaunchSpecification.SetNetworkInterfaces(
-						[]*aws.NetworkInterface{iface},
-					)
+				if e.AssociatePublicIP != nil {
+					iface := &aws.NetworkInterface{
+						Description:              fi.String("eth0"),
+						DeviceIndex:              fi.Int(0),
+						DeleteOnTermination:      fi.Bool(true),
+						AssociatePublicIPAddress: e.AssociatePublicIP,
+					}
+
+					group.Compute.LaunchSpecification.SetNetworkInterfaces([]*aws.NetworkInterface{iface})
 				}
 			}
 
@@ -439,30 +598,57 @@ func (_ *Elastigroup) create(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 			// Tags.
 			{
-				tags := e.buildTags()
-				group.Compute.LaunchSpecification.SetTags(tags)
+				if e.Tags != nil {
+					group.Compute.LaunchSpecification.SetTags(e.buildTags())
+				}
+			}
+
+			// Health check.
+			{
+				if e.HealthCheckType != nil {
+					group.Compute.LaunchSpecification.SetHealthCheckType(e.HealthCheckType)
+				}
 			}
 		}
 	}
 
-	// Integration.
+	// Auto Scaler.
 	{
-		if e.AutoScalerClusterID != nil {
+		if opts := e.AutoScalerOpts; opts != nil {
 			k8s := new(aws.KubernetesIntegration)
-			k8s.SetClusterIdentifier(e.AutoScalerClusterID)
 			k8s.SetIntegrationMode(fi.String("pod"))
+			k8s.SetClusterIdentifier(opts.ClusterID)
 
-			if e.AutoScalerEnabled != nil {
-				autoScale := new(aws.AutoScaleKubernetes)
-				autoScale.SetIsEnabled(e.AutoScalerEnabled)
+			if opts.Enabled != nil {
+				autoScaler := new(aws.AutoScaleKubernetes)
+				autoScaler.IsEnabled = opts.Enabled
+				autoScaler.IsAutoConfig = fi.Bool(true)
 
-				labelsMap := e.AutoScalerNodeLabels
-				if labelsMap != nil && len(labelsMap) > 0 {
-					labels := e.buildAutoScaleLabels(labelsMap)
-					autoScale.SetLabels(labels)
+				// Headroom.
+				if headroom := opts.Headroom; headroom != nil {
+					autoScaler.IsAutoConfig = fi.Bool(false)
+					autoScaler.Headroom = &aws.AutoScaleHeadroom{
+						CPUPerUnit:    headroom.CPUPerUnit,
+						GPUPerUnit:    headroom.GPUPerUnit,
+						MemoryPerUnit: headroom.MemPerUnit,
+						NumOfUnits:    headroom.NumOfUnits,
+					}
 				}
 
-				k8s.SetAutoScale(autoScale)
+				// Scale down.
+				if down := opts.Down; down != nil {
+					autoScaler.Down = &aws.AutoScaleDown{
+						MaxScaleDownPercentage: down.MaxPercentage,
+						EvaluationPeriods:      down.EvaluationPeriods,
+					}
+				}
+
+				// Labels.
+				if labels := opts.Labels; labels != nil {
+					autoScaler.Labels = e.buildAutoScaleLabels(labels)
+				}
+
+				k8s.SetAutoScale(autoScaler)
 			}
 
 			integration := new(aws.Integration)
@@ -478,7 +664,7 @@ func (_ *Elastigroup) create(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 readyLoop:
 	for {
 		attempt++
-		glog.V(2).Infof("(%d/%d) Attempting to create elastigroup: %s, config: %s",
+		klog.V(2).Infof("(%d/%d) Attempting to create Elastigroup: %q, config: %s",
 			attempt, maxAttempts, *e.Name, stringutil.Stringify(group))
 
 		// Wait for IAM instance profile to be ready.
@@ -491,7 +677,7 @@ readyLoop:
 		}
 
 		// Create the Elastigroup.
-		id, err := cloud.Spotinst().Create(context.Background(), eg)
+		id, err := cloud.Spotinst().Elastigroup().Create(context.Background(), eg)
 		if err == nil {
 			e.ID = fi.String(id)
 			break
@@ -504,8 +690,8 @@ readyLoop:
 						return fmt.Errorf("IAM instance profile not yet created/propagated (original error: %v)", err)
 					}
 
-					glog.V(4).Infof("Got an error indicating that the IAM instance profile %q is not ready %q", fi.StringValue(e.IAMInstanceProfile.Name), err)
-					glog.Infof("Waiting for IAM instance profile %q to be ready", fi.StringValue(e.IAMInstanceProfile.Name))
+					klog.V(4).Infof("Got an error indicating that the IAM instance profile %q is not ready %q", fi.StringValue(e.IAMInstanceProfile.Name), err)
+					klog.Infof("Waiting for IAM instance profile %q to be ready", fi.StringValue(e.IAMInstanceProfile.Name))
 					goto readyLoop
 				}
 			}
@@ -518,19 +704,31 @@ readyLoop:
 }
 
 func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) error {
-	glog.V(2).Infof("Updating elastigroup %q", *e.Name)
+	klog.V(2).Infof("Updating Elastigroup %q", *e.Name)
 
-	actual, err := e.find(cloud.Spotinst(), *e.Name)
+	actual, err := e.find(cloud.Spotinst().Elastigroup(), *e.Name)
 	if err != nil {
-		glog.Errorf("Unable to resolve elastigroup %q, error: %s", *e.Name, err)
+		klog.Errorf("Unable to resolve Elastigroup %q, error: %v", *e.Name, err)
 		return err
 	}
 
+	var changed bool
 	group := new(aws.Group)
 	group.SetId(actual.ID)
 
 	// Strategy.
 	{
+		// Spot percentage.
+		if changes.SpotPercentage != nil {
+			if group.Strategy == nil {
+				group.Strategy = new(aws.Strategy)
+			}
+
+			group.Strategy.SetRisk(e.SpotPercentage)
+			changes.SpotPercentage = nil
+			changed = true
+		}
+
 		// Orientation.
 		if changes.Orientation != nil {
 			if group.Strategy == nil {
@@ -539,6 +737,7 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 			group.Strategy.SetAvailabilityVsCost(fi.String(string(normalizeOrientation(e.Orientation))))
 			changes.Orientation = nil
+			changed = true
 		}
 
 		// Fallback to on-demand.
@@ -549,6 +748,7 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 			group.Strategy.SetFallbackToOnDemand(e.FallbackToOnDemand)
 			changes.FallbackToOnDemand = nil
+			changed = true
 		}
 
 		// Utilize reserved instances.
@@ -559,6 +759,7 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 			group.Strategy.SetUtilizeReservedInstances(e.UtilizeReservedInstances)
 			changes.UtilizeReservedInstances = nil
+			changed = true
 		}
 	}
 
@@ -572,9 +773,10 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 			group.Compute.SetProduct(e.Product)
 			changes.Product = nil
+			changed = true
 		}
 
-		// OnDemand instance type.
+		// On-demand instance type.
 		{
 			if changes.OnDemandInstanceType != nil {
 				if group.Compute == nil {
@@ -586,17 +788,13 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 				group.Compute.InstanceTypes.SetOnDemand(e.OnDemandInstanceType)
 				changes.OnDemandInstanceType = nil
+				changed = true
 			}
 		}
 
 		// Spot instance types.
 		{
 			if changes.SpotInstanceTypes != nil {
-				types := make([]string, len(e.SpotInstanceTypes))
-				for i, typ := range e.SpotInstanceTypes {
-					types[i] = typ
-				}
-
 				if group.Compute == nil {
 					group.Compute = new(aws.Compute)
 				}
@@ -604,14 +802,22 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 					group.Compute.InstanceTypes = new(aws.InstanceTypes)
 				}
 
+				types := make([]string, len(e.SpotInstanceTypes))
+				copy(types, e.SpotInstanceTypes)
+
 				group.Compute.InstanceTypes.SetSpot(types)
 				changes.SpotInstanceTypes = nil
+				changed = true
 			}
 		}
 
 		// Availability zones.
 		{
 			if changes.Subnets != nil {
+				if group.Compute == nil {
+					group.Compute = new(aws.Compute)
+				}
+
 				zones := make([]*aws.AvailabilityZone, len(e.Subnets))
 				for i, subnet := range e.Subnets {
 					zone := new(aws.AvailabilityZone)
@@ -620,12 +826,9 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 					zones[i] = zone
 				}
 
-				if group.Compute == nil {
-					group.Compute = new(aws.Compute)
-				}
-
 				group.Compute.SetAvailabilityZones(zones)
 				changes.Subnets = nil
+				changed = true
 			}
 		}
 
@@ -634,11 +837,6 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 			// Security groups.
 			{
 				if changes.SecurityGroups != nil {
-					securityGroupIDs := make([]string, len(e.SecurityGroups))
-					for i, sg := range e.SecurityGroups {
-						securityGroupIDs[i] = *sg.ID
-					}
-
 					if group.Compute == nil {
 						group.Compute = new(aws.Compute)
 					}
@@ -646,20 +844,20 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 						group.Compute.LaunchSpecification = new(aws.LaunchSpecification)
 					}
 
+					securityGroupIDs := make([]string, len(e.SecurityGroups))
+					for i, sg := range e.SecurityGroups {
+						securityGroupIDs[i] = *sg.ID
+					}
+
 					group.Compute.LaunchSpecification.SetSecurityGroupIDs(securityGroupIDs)
 					changes.SecurityGroups = nil
+					changed = true
 				}
 			}
 
 			// User data.
 			{
 				if changes.UserData != nil {
-					userData, err := e.UserData.AsString()
-					if err != nil {
-						return err
-					}
-					encoded := base64.StdEncoding.EncodeToString([]byte(userData))
-
 					if group.Compute == nil {
 						group.Compute = new(aws.Compute)
 					}
@@ -667,36 +865,101 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 						group.Compute.LaunchSpecification = new(aws.LaunchSpecification)
 					}
 
+					userData, err := e.UserData.AsString()
+					if err != nil {
+						return err
+					}
+					encoded := base64.StdEncoding.EncodeToString([]byte(userData))
+
 					group.Compute.LaunchSpecification.SetUserData(fi.String(encoded))
 					changes.UserData = nil
+					changed = true
 				}
 			}
 
 			// Network interfaces.
 			{
 				if changes.AssociatePublicIP != nil {
-					if *changes.AssociatePublicIP {
-						iface := new(aws.NetworkInterface)
-						iface.SetDeviceIndex(fi.Int(0))
-						iface.SetAssociatePublicIPAddress(fi.Bool(true))
-						iface.SetDeleteOnTermination(fi.Bool(true))
-
-						if group.Compute == nil {
-							group.Compute = new(aws.Compute)
-						}
-						if group.Compute.LaunchSpecification == nil {
-							group.Compute.LaunchSpecification = new(aws.LaunchSpecification)
-						}
-						group.Compute.LaunchSpecification.SetNetworkInterfaces(
-							[]*aws.NetworkInterface{iface},
-						)
+					if group.Compute == nil {
+						group.Compute = new(aws.Compute)
+					}
+					if group.Compute.LaunchSpecification == nil {
+						group.Compute.LaunchSpecification = new(aws.LaunchSpecification)
 					}
 
+					iface := &aws.NetworkInterface{
+						Description:              fi.String("eth0"),
+						DeviceIndex:              fi.Int(0),
+						DeleteOnTermination:      fi.Bool(true),
+						AssociatePublicIPAddress: changes.AssociatePublicIP,
+					}
+
+					group.Compute.LaunchSpecification.SetNetworkInterfaces([]*aws.NetworkInterface{iface})
 					changes.AssociatePublicIP = nil
+					changed = true
 				}
 			}
 
-			// Image ID.
+			// Root volume options.
+			{
+				if opts := changes.RootVolumeOpts; opts != nil {
+
+					// Block device mappings.
+					{
+						if opts.Type != nil || opts.Size != nil || opts.IOPS != nil {
+							rootDevices, err := e.buildRootDevice(cloud)
+							if err != nil {
+								return err
+							}
+
+							ephemeralDevices, err := e.buildEphemeralDevices(e.OnDemandInstanceType)
+							if err != nil {
+								return err
+							}
+
+							if len(rootDevices) != 0 || len(ephemeralDevices) != 0 {
+								var mappings []*aws.BlockDeviceMapping
+								for device, bdm := range rootDevices {
+									mappings = append(mappings, e.buildBlockDeviceMapping(device, bdm))
+								}
+								for device, bdm := range ephemeralDevices {
+									mappings = append(mappings, e.buildBlockDeviceMapping(device, bdm))
+								}
+								if len(mappings) > 0 {
+									if group.Compute == nil {
+										group.Compute = new(aws.Compute)
+									}
+									if group.Compute.LaunchSpecification == nil {
+										group.Compute.LaunchSpecification = new(aws.LaunchSpecification)
+									}
+
+									group.Compute.LaunchSpecification.SetBlockDeviceMappings(mappings)
+									changed = true
+								}
+							}
+						}
+					}
+
+					// EBS optimization.
+					{
+						if opts.Optimization != nil {
+							if group.Compute == nil {
+								group.Compute = new(aws.Compute)
+							}
+							if group.Compute.LaunchSpecification == nil {
+								group.Compute.LaunchSpecification = new(aws.LaunchSpecification)
+							}
+
+							group.Compute.LaunchSpecification.SetEBSOptimized(e.RootVolumeOpts.Optimization)
+							changed = true
+						}
+					}
+
+					changes.RootVolumeOpts = nil
+				}
+			}
+
+			// Image.
 			{
 				if changes.ImageID != nil {
 					image, err := resolveImage(cloud, fi.StringValue(e.ImageID))
@@ -711,7 +974,9 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 						if group.Compute.LaunchSpecification == nil {
 							group.Compute.LaunchSpecification = new(aws.LaunchSpecification)
 						}
+
 						group.Compute.LaunchSpecification.SetImageId(image.ImageId)
+						changed = true
 					}
 
 					changes.ImageID = nil
@@ -721,8 +986,6 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 			// Tags.
 			{
 				if changes.Tags != nil {
-					tags := e.buildTags()
-
 					if group.Compute == nil {
 						group.Compute = new(aws.Compute)
 					}
@@ -730,17 +993,15 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 						group.Compute.LaunchSpecification = new(aws.LaunchSpecification)
 					}
 
-					group.Compute.LaunchSpecification.SetTags(tags)
+					group.Compute.LaunchSpecification.SetTags(e.buildTags())
 					changes.Tags = nil
+					changed = true
 				}
 			}
 
 			// IAM instance profile.
 			{
 				if changes.IAMInstanceProfile != nil {
-					iprof := new(aws.IAMInstanceProfile)
-					iprof.SetName(e.IAMInstanceProfile.GetName())
-
 					if group.Compute == nil {
 						group.Compute = new(aws.Compute)
 					}
@@ -748,8 +1009,28 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 						group.Compute.LaunchSpecification = new(aws.LaunchSpecification)
 					}
 
+					iprof := new(aws.IAMInstanceProfile)
+					iprof.SetName(e.IAMInstanceProfile.GetName())
+
 					group.Compute.LaunchSpecification.SetIAMInstanceProfile(iprof)
 					changes.IAMInstanceProfile = nil
+					changed = true
+				}
+			}
+
+			// Monitoring.
+			{
+				if changes.Monitoring != nil {
+					if group.Compute == nil {
+						group.Compute = new(aws.Compute)
+					}
+					if group.Compute.LaunchSpecification == nil {
+						group.Compute.LaunchSpecification = new(aws.LaunchSpecification)
+					}
+
+					group.Compute.LaunchSpecification.SetMonitoring(e.Monitoring)
+					changes.Monitoring = nil
+					changed = true
 				}
 			}
 
@@ -765,6 +1046,7 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 					group.Compute.LaunchSpecification.SetKeyPair(e.SSHKey.Name)
 					changes.SSHKey = nil
+					changed = true
 				}
 			}
 
@@ -792,6 +1074,7 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 						group.Compute.LaunchSpecification.SetLoadBalancersConfig(cfg)
 						changes.LoadBalancer = nil
+						changed = true
 					}
 				}
 			}
@@ -808,6 +1091,23 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 					group.Compute.LaunchSpecification.SetTenancy(e.Tenancy)
 					changes.Tenancy = nil
+					changed = true
+				}
+			}
+
+			// Health check.
+			{
+				if changes.HealthCheckType != nil {
+					if group.Compute == nil {
+						group.Compute = new(aws.Compute)
+					}
+					if group.Compute.LaunchSpecification == nil {
+						group.Compute.LaunchSpecification = new(aws.LaunchSpecification)
+					}
+
+					group.Compute.LaunchSpecification.SetHealthCheckType(e.HealthCheckType)
+					changes.HealthCheckType = nil
+					changed = true
 				}
 			}
 		}
@@ -822,13 +1122,11 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 			group.Capacity.SetMinimum(fi.Int(int(*e.MinSize)))
 			changes.MinSize = nil
+			changed = true
 
 			// Scale up the target capacity, if needed.
-			actual, err := e.find(cloud.Spotinst(), *e.Name)
-			if err == nil && actual != nil {
-				if int64(*actual.Capacity.Target) < *e.MinSize {
-					group.Capacity.SetTarget(fi.Int(int(*e.MinSize)))
-				}
+			if int64(*actual.Capacity.Target) < *e.MinSize {
+				group.Capacity.SetTarget(fi.Int(int(*e.MinSize)))
 			}
 		}
 		if changes.MaxSize != nil {
@@ -838,56 +1136,73 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 
 			group.Capacity.SetMaximum(fi.Int(int(*e.MaxSize)))
 			changes.MaxSize = nil
+			changed = true
 		}
 	}
 
 	// Auto Scaler.
 	{
-		if changes.AutoScalerEnabled != nil {
-			if group.Integration == nil {
-				group.Integration = new(aws.Integration)
-			}
-			if group.Integration.Kubernetes == nil {
-				group.Integration.Kubernetes = new(aws.KubernetesIntegration)
-			}
-			if group.Integration.Kubernetes.AutoScale == nil {
-				group.Integration.Kubernetes.AutoScale = new(aws.AutoScaleKubernetes)
+		if opts := changes.AutoScalerOpts; opts != nil {
+			if opts.Enabled != nil {
+				autoScaler := new(aws.AutoScaleKubernetes)
+				autoScaler.IsEnabled = e.AutoScalerOpts.Enabled
+
+				// Headroom.
+				if headroom := opts.Headroom; headroom != nil {
+					autoScaler.IsAutoConfig = fi.Bool(false)
+					autoScaler.Headroom = &aws.AutoScaleHeadroom{
+						CPUPerUnit:    e.AutoScalerOpts.Headroom.CPUPerUnit,
+						GPUPerUnit:    e.AutoScalerOpts.Headroom.GPUPerUnit,
+						MemoryPerUnit: e.AutoScalerOpts.Headroom.MemPerUnit,
+						NumOfUnits:    e.AutoScalerOpts.Headroom.NumOfUnits,
+					}
+				} else if a.AutoScalerOpts.Headroom != nil {
+					autoScaler.IsAutoConfig = fi.Bool(true)
+					autoScaler.SetHeadroom(nil)
+				}
+
+				// Scale down.
+				if down := opts.Down; down != nil {
+					autoScaler.Down = &aws.AutoScaleDown{
+						MaxScaleDownPercentage: down.MaxPercentage,
+						EvaluationPeriods:      down.EvaluationPeriods,
+					}
+				} else if a.AutoScalerOpts.Down != nil {
+					autoScaler.SetDown(nil)
+				}
+
+				// Labels.
+				if labels := opts.Labels; labels != nil {
+					autoScaler.Labels = e.buildAutoScaleLabels(e.AutoScalerOpts.Labels)
+				} else if a.AutoScalerOpts.Labels != nil {
+					autoScaler.SetLabels(nil)
+				}
+
+				k8s := new(aws.KubernetesIntegration)
+				k8s.SetAutoScale(autoScaler)
+
+				integration := new(aws.Integration)
+				integration.SetKubernetes(k8s)
+
+				group.SetIntegration(integration)
+				changed = true
 			}
 
-			group.Integration.Kubernetes.AutoScale.SetIsEnabled(e.AutoScalerEnabled)
-			changes.AutoScalerEnabled = nil
-		}
-
-		if nodeLabels := changes.AutoScalerNodeLabels; nodeLabels != nil && len(nodeLabels) > 0 {
-			if group.Integration == nil {
-				group.Integration = new(aws.Integration)
-			}
-			if group.Integration.Kubernetes == nil {
-				group.Integration.Kubernetes = new(aws.KubernetesIntegration)
-			}
-			if group.Integration.Kubernetes.AutoScale == nil {
-				group.Integration.Kubernetes.AutoScale = new(aws.AutoScaleKubernetes)
-			}
-
-			group.Integration.Kubernetes.AutoScale.SetLabels(e.buildAutoScaleLabels(nodeLabels))
-			changes.AutoScalerNodeLabels = nil
+			changes.AutoScalerOpts = nil
 		}
 	}
 
 	empty := &Elastigroup{}
 	if !reflect.DeepEqual(empty, changes) {
-		glog.Warningf("Not all changes applied to elastigroup %q: %v", *group.ID, changes)
+		klog.Warningf("Not all changes applied to Elastigroup %q: %v", *group.ID, changes)
 	}
 
-	if group.Compute == nil &&
-		group.Capacity == nil &&
-		group.Strategy == nil &&
-		group.Integration == nil {
-		glog.V(2).Infof("No changes detected in elastigroup %q", *group.ID)
+	if !changed {
+		klog.V(2).Infof("No changes detected in Elastigroup %q", *group.ID)
 		return nil
 	}
 
-	glog.V(2).Infof("Updating elastigroup %q (config: %s)", *group.ID, stringutil.Stringify(group))
+	klog.V(2).Infof("Updating Elastigroup %q (config: %s)", *group.ID, stringutil.Stringify(group))
 
 	// Wrap the raw object as an Elastigroup.
 	eg, err := spotinst.NewElastigroup(cloud.ProviderID(), group)
@@ -896,7 +1211,7 @@ func (_ *Elastigroup) update(cloud awsup.AWSCloud, a, e, changes *Elastigroup) e
 	}
 
 	// Update the Elastigroup.
-	if err := cloud.Spotinst().Update(context.Background(), eg); err != nil {
+	if err := cloud.Spotinst().Elastigroup().Update(context.Background(), eg); err != nil {
 		return fmt.Errorf("spotinst: failed to update elastigroup: %v", err)
 	}
 
@@ -914,7 +1229,8 @@ type terraformElastigroup struct {
 	RootBlockDevice      *terraformElastigroupBlockDevice        `json:"ebs_block_device,omitempty"`
 	EphemeralBlockDevice []*terraformElastigroupBlockDevice      `json:"ephemeral_block_device,omitempty"`
 	Integration          *terraformElastigroupIntegration        `json:"integration_kubernetes,omitempty"`
-	Tags                 []*terraformElastigroupTag              `json:"tags,omitempty"`
+	Tags                 []*terraformKV                          `json:"tags,omitempty"`
+	Lifecycle            *terraformLifecycle                     `json:"lifecycle,omitempty"`
 
 	*terraformElastigroupCapacity
 	*terraformElastigroupStrategy
@@ -945,6 +1261,7 @@ type terraformElastigroupLaunchSpec struct {
 	Monitoring         *bool                `json:"enable_monitoring,omitempty"`
 	EBSOptimized       *bool                `json:"ebs_optimized,omitempty"`
 	ImageID            *string              `json:"image_id,omitempty"`
+	HealthCheckType    *string              `json:"health_check_type,omitempty"`
 	SecurityGroups     []*terraform.Literal `json:"security_groups,omitempty"`
 	UserData           *terraform.Literal   `json:"user_data,omitempty"`
 	IAMInstanceProfile *terraform.Literal   `json:"iam_instance_profile,omitempty"`
@@ -967,14 +1284,39 @@ type terraformElastigroupNetworkInterface struct {
 }
 
 type terraformElastigroupIntegration struct {
-	IntegrationMode    *string `json:"integration_mode,omitempty"`
-	ClusterIdentifier  *string `json:"cluster_identifier,omitempty"`
-	AutoScaleIsEnabled *bool   `json:"autoscale_is_enabled,omitempty"`
+	IntegrationMode   *string `json:"integration_mode,omitempty"`
+	ClusterIdentifier *string `json:"cluster_identifier,omitempty"`
+
+	*terraformAutoScaler
 }
 
-type terraformElastigroupTag struct {
+type terraformAutoScaler struct {
+	Enabled    *bool                        `json:"autoscale_is_enabled,omitempty"`
+	AutoConfig *bool                        `json:"autoscale_is_auto_config,omitempty"`
+	Headroom   *terraformAutoScalerHeadroom `json:"autoscale_headroom,omitempty"`
+	Down       *terraformAutoScalerDown     `json:"autoscale_down,omitempty"`
+	Labels     []*terraformKV               `json:"autoscale_labels,omitempty"`
+}
+
+type terraformAutoScalerHeadroom struct {
+	CPUPerUnit *int `json:"cpu_per_unit,omitempty"`
+	GPUPerUnit *int `json:"gpu_per_unit,omitempty"`
+	MemPerUnit *int `json:"memory_per_unit,omitempty"`
+	NumOfUnits *int `json:"num_of_units,omitempty"`
+}
+
+type terraformAutoScalerDown struct {
+	MaxPercentage     *int `json:"max_scale_down_percentage,omitempty"`
+	EvaluationPeriods *int `json:"evaluation_periods,omitempty"`
+}
+
+type terraformKV struct {
 	Key   *string `json:"key"`
 	Value *string `json:"value"`
+}
+
+type terraformLifecycle struct {
+	IgnoreChanges []string `json:"ignore_changes,omitempty"`
 }
 
 func (_ *Elastigroup) RenderTerraform(t *terraform.TerraformTarget, a, e, changes *Elastigroup) error {
@@ -993,7 +1335,7 @@ func (_ *Elastigroup) RenderTerraform(t *terraform.TerraformTarget, a, e, change
 			CapacityUnit:    fi.String("instance"),
 		},
 		terraformElastigroupStrategy: &terraformElastigroupStrategy{
-			SpotPercentage:           e.Risk,
+			SpotPercentage:           e.SpotPercentage,
 			Orientation:              fi.String(string(normalizeOrientation(e.Orientation))),
 			FallbackToOnDemand:       e.FallbackToOnDemand,
 			UtilizeReservedInstances: e.UtilizeReservedInstances,
@@ -1006,7 +1348,7 @@ func (_ *Elastigroup) RenderTerraform(t *terraform.TerraformTarget, a, e, change
 	}
 
 	// Image.
-	{
+	if e.ImageID != nil {
 		image, err := resolveImage(cloud, fi.StringValue(e.ImageID))
 		if err != nil {
 			return err
@@ -1025,8 +1367,8 @@ func (_ *Elastigroup) RenderTerraform(t *terraform.TerraformTarget, a, e, change
 		}
 	}
 
-	// Security Groups.
-	{
+	// Security groups.
+	if e.SecurityGroups != nil {
 		for _, sg := range e.SecurityGroups {
 			tf.SecurityGroups = append(tf.SecurityGroups, sg.TerraformLink())
 			if role != "" {
@@ -1038,50 +1380,36 @@ func (_ *Elastigroup) RenderTerraform(t *terraform.TerraformTarget, a, e, change
 	}
 
 	// User data.
-	{
-		if e.UserData != nil {
-			var err error
-			tf.UserData, err = t.AddFile("spotinst_elastigroup_aws", *e.Name, "user_data", e.UserData)
-			if err != nil {
-				return err
-			}
+	if e.UserData != nil {
+		var err error
+		tf.UserData, err = t.AddFile("spotinst_elastigroup_aws", *e.Name, "user_data", e.UserData)
+		if err != nil {
+			return err
 		}
 	}
 
-	// IAM Instance Profile.
-	{
-		if e.IAMInstanceProfile != nil {
-			tf.IAMInstanceProfile = e.IAMInstanceProfile.TerraformLink()
-		}
+	// IAM instance profile.
+	if e.IAMInstanceProfile != nil {
+		tf.IAMInstanceProfile = e.IAMInstanceProfile.TerraformLink()
 	}
 
 	// Monitoring.
-	{
-		if e.Monitoring != nil {
-			tf.Monitoring = e.Monitoring
-		} else {
-			tf.Monitoring = fi.Bool(false)
-		}
+	if e.Monitoring != nil {
+		tf.Monitoring = e.Monitoring
 	}
 
-	// EBS Optimization.
-	{
-		if e.RootVolumeOptimization != nil {
-			tf.EBSOptimized = e.RootVolumeOptimization
-		} else {
-			tf.EBSOptimized = fi.Bool(false)
-		}
+	// Health check.
+	if e.HealthCheckType != nil {
+		tf.HealthCheckType = e.HealthCheckType
 	}
 
-	// SSH Key pair.
-	{
-		if e.SSHKey != nil {
-			tf.KeyName = e.SSHKey.TerraformLink()
-		}
+	// SSH key.
+	if e.SSHKey != nil {
+		tf.KeyName = e.SSHKey.TerraformLink()
 	}
 
 	// Subnets.
-	{
+	if e.Subnets != nil {
 		for _, subnet := range e.Subnets {
 			tf.SubnetIDs = append(tf.SubnetIDs, subnet.TerraformLink())
 			if role != "" {
@@ -1093,84 +1421,139 @@ func (_ *Elastigroup) RenderTerraform(t *terraform.TerraformTarget, a, e, change
 	}
 
 	// Load balancer.
-	{
-		if e.LoadBalancer != nil {
-			tf.LoadBalancers = append(tf.LoadBalancers, e.LoadBalancer.TerraformLink())
-		}
+	if e.LoadBalancer != nil {
+		tf.LoadBalancers = append(tf.LoadBalancers, e.LoadBalancer.TerraformLink())
 	}
 
 	// Public IP.
-	{
-		if e.AssociatePublicIP != nil && *e.AssociatePublicIP {
-			tf.NetworkInterfaces = append(tf.NetworkInterfaces, &terraformElastigroupNetworkInterface{
-				Description:              fi.String("eth0"),
-				DeviceIndex:              fi.Int(0),
-				AssociatePublicIPAddress: fi.Bool(true),
-				DeleteOnTermination:      fi.Bool(true),
-			})
-		}
+	if e.AssociatePublicIP != nil {
+		tf.NetworkInterfaces = append(tf.NetworkInterfaces, &terraformElastigroupNetworkInterface{
+			Description:              fi.String("eth0"),
+			DeviceIndex:              fi.Int(0),
+			DeleteOnTermination:      fi.Bool(true),
+			AssociatePublicIPAddress: e.AssociatePublicIP,
+		})
 	}
 
-	// Block Devices.
+	// Root volume options.
 	{
-		rootDevices, err := e.buildRootDevice(t.Cloud.(awsup.AWSCloud))
-		if err != nil {
-			return err
-		}
+		if opts := e.RootVolumeOpts; opts != nil {
 
-		ephemeralDevices, err := e.buildEphemeralDevices(e.OnDemandInstanceType)
-		if err != nil {
-			return err
-		}
+			// Block device mappings.
+			{
+				rootDevices, err := e.buildRootDevice(t.Cloud.(awsup.AWSCloud))
+				if err != nil {
+					return err
+				}
 
-		if len(rootDevices) != 0 {
-			if len(rootDevices) != 1 {
-				return fmt.Errorf("unexpectedly found multiple root devices")
+				ephemeralDevices, err := e.buildEphemeralDevices(e.OnDemandInstanceType)
+				if err != nil {
+					return err
+				}
+
+				if len(rootDevices) != 0 {
+					if len(rootDevices) != 1 {
+						return fmt.Errorf("unexpectedly found multiple root devices")
+					}
+
+					for name, bdm := range rootDevices {
+						tf.RootBlockDevice = &terraformElastigroupBlockDevice{
+							DeviceName:          fi.String(name),
+							VolumeType:          bdm.EbsVolumeType,
+							VolumeSize:          bdm.EbsVolumeSize,
+							DeleteOnTermination: fi.Bool(true),
+						}
+					}
+				}
+
+				if len(ephemeralDevices) != 0 {
+					tf.EphemeralBlockDevice = []*terraformElastigroupBlockDevice{}
+					for _, deviceName := range sets.StringKeySet(ephemeralDevices).List() {
+						bdm := ephemeralDevices[deviceName]
+						tf.EphemeralBlockDevice = append(tf.EphemeralBlockDevice, &terraformElastigroupBlockDevice{
+							VirtualName: bdm.VirtualName,
+							DeviceName:  fi.String(deviceName),
+						})
+					}
+				}
 			}
 
-			for name, bdm := range rootDevices {
-				tf.RootBlockDevice = &terraformElastigroupBlockDevice{
-					DeviceName:          fi.String(name),
-					VolumeType:          bdm.EbsVolumeType,
-					VolumeSize:          bdm.EbsVolumeSize,
-					DeleteOnTermination: fi.Bool(true),
+			// EBS optimization.
+			{
+				if opts.Optimization != nil {
+					tf.EBSOptimized = opts.Optimization
 				}
 			}
 		}
-
-		if len(ephemeralDevices) != 0 {
-			tf.EphemeralBlockDevice = []*terraformElastigroupBlockDevice{}
-			for _, deviceName := range sets.StringKeySet(ephemeralDevices).List() {
-				bdm := ephemeralDevices[deviceName]
-				tf.EphemeralBlockDevice = append(tf.EphemeralBlockDevice, &terraformElastigroupBlockDevice{
-					VirtualName: bdm.VirtualName,
-					DeviceName:  fi.String(deviceName),
-				})
-			}
-		}
 	}
 
-	// Integration.
+	// Auto Scaler.
 	{
-		if e.AutoScalerClusterID != nil {
+		if opts := e.AutoScalerOpts; opts != nil {
 			tf.Integration = &terraformElastigroupIntegration{
 				IntegrationMode:   fi.String("pod"),
-				ClusterIdentifier: e.AutoScalerClusterID,
+				ClusterIdentifier: opts.ClusterID,
 			}
-			if e.AutoScalerEnabled != nil {
-				tf.Integration.AutoScaleIsEnabled = e.AutoScalerEnabled
+
+			if opts.Enabled != nil {
+				tf.Integration.terraformAutoScaler = &terraformAutoScaler{
+					Enabled:    opts.Enabled,
+					AutoConfig: fi.Bool(true),
+				}
+
+				// Headroom.
+				if headroom := opts.Headroom; headroom != nil {
+					tf.Integration.AutoConfig = fi.Bool(false)
+					tf.Integration.Headroom = &terraformAutoScalerHeadroom{
+						CPUPerUnit: headroom.CPUPerUnit,
+						GPUPerUnit: headroom.GPUPerUnit,
+						MemPerUnit: headroom.MemPerUnit,
+						NumOfUnits: headroom.NumOfUnits,
+					}
+				}
+
+				// Scale down.
+				if down := opts.Down; down != nil {
+					tf.Integration.Down = &terraformAutoScalerDown{
+						MaxPercentage:     down.MaxPercentage,
+						EvaluationPeriods: down.EvaluationPeriods,
+					}
+				}
+
+				// Labels.
+				if labels := opts.Labels; labels != nil {
+					tf.Integration.Labels = make([]*terraformKV, 0, len(labels))
+					for k, v := range labels {
+						tf.Integration.Labels = append(tf.Integration.Labels, &terraformKV{
+							Key:   fi.String(k),
+							Value: fi.String(v),
+						})
+					}
+				}
+
+				// Ignore capacity changes because the auto scaler updates the
+				// desired capacity overtime.
+				if fi.BoolValue(tf.Integration.Enabled) {
+					tf.Lifecycle = &terraformLifecycle{
+						IgnoreChanges: []string{
+							"desired_capacity",
+						},
+					}
+				}
 			}
 		}
 	}
 
 	// Tags.
 	{
-		tags := e.buildTags()
-		for _, tag := range tags {
-			tf.Tags = append(tf.Tags, &terraformElastigroupTag{
-				Key:   tag.Key,
-				Value: tag.Value,
-			})
+		if e.Tags != nil {
+			tags := e.buildTags()
+			for _, tag := range tags {
+				tf.Tags = append(tf.Tags, &terraformKV{
+					Key:   tag.Key,
+					Value: tag.Value,
+				})
+			}
 		}
 	}
 
@@ -1196,7 +1579,6 @@ func (e *Elastigroup) buildTags() []*aws.Tag {
 
 func (e *Elastigroup) buildAutoScaleLabels(labelsMap map[string]string) []*aws.AutoScaleLabel {
 	labels := make([]*aws.AutoScaleLabel, 0, len(labelsMap))
-
 	for key, value := range labelsMap {
 		labels = append(labels, &aws.AutoScaleLabel{
 			Key:   fi.String(key),
@@ -1239,10 +1621,15 @@ func (e *Elastigroup) buildRootDevice(cloud awsup.AWSCloud) (map[string]*awstask
 
 	rootDeviceMapping := &awstasks.BlockDeviceMapping{
 		EbsDeleteOnTermination: fi.Bool(true),
-		EbsVolumeSize:          e.RootVolumeSize,
-		EbsVolumeType:          e.RootVolumeType,
-		EbsVolumeIops:          e.RootVolumeIOPS,
+		EbsVolumeSize:          fi.Int64(int64(fi.Int32Value(e.RootVolumeOpts.Size))),
+		EbsVolumeType:          e.RootVolumeOpts.Type,
 	}
+
+	// The parameter IOPS is not supported for gp2 volumes.
+	if e.RootVolumeOpts.IOPS != nil && fi.StringValue(e.RootVolumeOpts.Type) != "gp2" {
+		rootDeviceMapping.EbsVolumeIops = fi.Int64(int64(fi.Int32Value(e.RootVolumeOpts.IOPS)))
+	}
+
 	blockDeviceMappings[rootDeviceName] = rootDeviceMapping
 
 	return blockDeviceMappings, nil
@@ -1260,7 +1647,7 @@ func (e *Elastigroup) buildBlockDeviceMapping(deviceName string, i *awstasks.Blo
 		o.EBS.VolumeType = i.EbsVolumeType
 
 		// The parameter IOPS is not supported for gp2 volumes.
-		if fi.StringValue(i.EbsVolumeType) != "gp2" {
+		if i.EbsVolumeIops != nil && fi.StringValue(i.EbsVolumeType) != "gp2" {
 			o.EBS.IOPS = fi.Int(int(fi.Int64Value(i.EbsVolumeIops)))
 		}
 	}
@@ -1284,6 +1671,14 @@ func (e *Elastigroup) applyDefaults() {
 	if e.Orientation == nil || (e.Orientation != nil && fi.StringValue(e.Orientation) == "") {
 		e.Orientation = fi.String("balanced")
 	}
+
+	if e.Monitoring == nil {
+		e.Monitoring = fi.Bool(false)
+	}
+
+	if e.HealthCheckType == nil {
+		e.HealthCheckType = fi.String("K8S_NODE")
+	}
 }
 
 func resolveImage(cloud awsup.AWSCloud, name string) (*ec2.Image, error) {
@@ -1306,7 +1701,7 @@ func subnetSlicesEqualIgnoreOrder(l, r []*awstasks.Subnet) bool {
 	var rIDs []string
 	for _, s := range r {
 		if s.ID == nil {
-			glog.V(4).Infof("Subnet ID not set; returning not-equal: %v", s)
+			klog.V(4).Infof("Subnet ID not set; returning not-equal: %v", s)
 			return false
 		}
 		rIDs = append(rIDs, *s.ID)

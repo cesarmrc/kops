@@ -35,7 +35,7 @@
 # NODEUP_BUCKET="s3-devel-bucket-name-store-nodeup" \
 # IMAGE="kope.io/k8s-1.6-debian-jessie-amd64-hvm-ebs-2017-05-02" \
 # ./dev-build.sh
-# 
+#
 # # TLDR;
 # 1. setup dns in route53
 # 2. create s3 buckets - state store and nodeup bucket
@@ -45,10 +45,10 @@
 # 6. use ssh-agent and ssh -A
 # 7. your pem will be the access token
 # 8. user is admin, and the default is debian
-# 
+#
 # # For more details see:
 #
-# https://github.com/kubernetes/kops/blob/master/docs/aws.md
+# https://github.com/kubernetes/kops/blob/master/docs/getting_started/aws.md
 #
 ###############################################################################
 
@@ -95,13 +95,13 @@ echo "Starting build"
 
 # removing CI=1 because it forces a new upload every time
 # export CI=1
-make && S3_BUCKET=s3://${NODEUP_BUCKET} make upload
+make && UPLOAD_DEST=s3://${NODEUP_BUCKET} make upload
 
 # removing make test since it relies on the files in the bucket
 # && make test
 
-KOPS_CHANNEL=$(kops version | awk '{ print $2 }' |sed 's/\+/%2B/')
-KOPS_BASE_URL="http://${NODEUP_BUCKET}.s3.amazonaws.com/kops/${KOPS_CHANNEL}/"
+KOPS_VERSION=$(kops version --short)
+KOPS_BASE_URL="http://${NODEUP_BUCKET}.s3.amazonaws.com/kops/${KOPS_VERSION}/"
 
 echo "KOPS_BASE_URL=${KOPS_BASE_URL}"
 echo "NODEUP_URL=${KOPS_BASE_URL}linux/amd64/nodeup"
@@ -124,11 +124,11 @@ if [[ $TOPOLOGY == "private" ]]; then
   kops_command+=" --bastion='true'"
 fi
 
-if [ -n "${KOPS_FEATURE_FLAGS+x}" ]; then 
+if [ -n "${KOPS_FEATURE_FLAGS+x}" ]; then
   kops_command=KOPS_FEATURE_FLAGS="${KOPS_FEATURE_FLAGS}" $kops_command
 fi
 
-if [[ $KOPS_CREATE == "yes" ]]; then 
+if [[ $KOPS_CREATE == "yes" ]]; then
   kops_command="$kops_command --yes"
 fi
 

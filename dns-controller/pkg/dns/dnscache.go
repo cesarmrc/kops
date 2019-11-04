@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 	"k8s.io/kops/dnsprovider/pkg/dnsprovider"
 )
 
@@ -69,9 +69,9 @@ func (d *dnsCache) ListZones(validity time.Duration) ([]dnsprovider.Zone, error)
 		if (d.cachedZonesTimestamp + validity.Nanoseconds()) > now {
 			return d.cachedZones, nil
 		}
-		glog.V(2).Infof("querying all DNS zones (cache expired)")
+		klog.V(2).Infof("querying all DNS zones (cache expired)")
 	} else {
-		glog.V(2).Infof("querying all DNS zones (no cached results)")
+		klog.V(2).Infof("querying all DNS zones (no cached results)")
 	}
 
 	var allZones []dnsprovider.Zone

@@ -42,6 +42,7 @@ See [1.5.0-alpha4 commit](https://github.com/kubernetes/kops/commit/a60d7982e04c
 ## Check builds OK
 
 ```
+rm -rf .build/ .bazelbuild/
 make ci
 ```
 
@@ -56,7 +57,7 @@ make dns-controller-push DOCKER_REGISTRY=kope
 
 ```
 # export AWS_PROFILE=??? # If needed
-make upload S3_BUCKET=s3://kubeupv2
+make upload UPLOAD_DEST=s3://kubeupv2
 ```
 
 ## Tag new version
@@ -65,8 +66,8 @@ Make sure you are on the release branch `git checkout release-1.X`
 
 ```
 make release-tag
-git push
-git push --tags
+git push git@github.com:kubernetes/kops
+git push --tags git@github.com:kubernetes/kops
 ```
 
 ## Update release branch
@@ -92,8 +93,8 @@ make release-github
 e.g.
 
 ```
-git log 1.8.0-beta.1..1.8.0-beta.2 --oneline | grep Merge.pull | cut -f 5 -d ' ' | tac  > ~/shipbot/prs
-
+git log 1.14.0-beta.1..1.14.0 --oneline | grep Merge.pull | cut -f 5 -d ' ' | tac  > /tmp/prs
+relnotes  -config .shipbot.yaml  < /tmp/prs  >> docs/releases/1.14-NOTES.md
 ```
 
 ## On github
@@ -112,3 +113,8 @@ Once we are satisfied the release is sound:
 Once we are satisfied the release is stable:
 
 * Bump the kops recommended version in the stable channel
+
+## Update conformance results with CNCF
+
+Use the following instructions: https://github.com/cncf/k8s-conformance/blob/master/instructions.md
+

@@ -1,3 +1,5 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+
 approvers:
   - justinsb
   - chrislovecnm
@@ -6,7 +8,10 @@ approvers:
   - kashifsaadat
   - gambol99
   - mikesplain
-reviewers:
-  - robinpercy
   - chrisz100
   - rdrgmnzs
+reviewers:
+  - robinpercy
+  - granular-ryanbonham
+  - zetaab
+  - rifelpet

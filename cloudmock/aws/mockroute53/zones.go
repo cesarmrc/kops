@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/route53"
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 func (m *MockRoute53) GetHostedZoneRequest(*route53.GetHostedZoneInput) (*request.Request, *route53.GetHostedZoneOutput) {
@@ -37,7 +37,7 @@ func (m *MockRoute53) GetHostedZone(request *route53.GetHostedZoneInput) (*route
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	glog.Infof("GetHostedZone %v", request)
+	klog.Infof("GetHostedZone %v", request)
 
 	if request.Id == nil {
 		// TODO: Use correct error
@@ -88,7 +88,7 @@ func (m *MockRoute53) ListHostedZonesPages(request *route53.ListHostedZonesInput
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	glog.Infof("ListHostedZonesPages %v", request)
+	klog.Infof("ListHostedZonesPages %v", request)
 
 	page := &route53.ListHostedZonesOutput{}
 	for _, zone := range m.Zones {

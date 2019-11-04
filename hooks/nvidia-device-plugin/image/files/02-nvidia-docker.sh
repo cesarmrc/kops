@@ -66,10 +66,16 @@ EOF
 # Note that the nvidia-docker version must match the docker-ce version
 # --force-confold prevents prompt for replacement of daemon.json
 apt-get -y update
+# Stop protokube to ensure not bring kubelet up again
+systemctl stop protokube
+# Stop kubelet to ensure not bring stopped containers up again and leak
+# them as orphan containers
+systemctl stop kubelet
+# pin versions https://github.com/NVIDIA/nvidia-docker/wiki/Frequently-Asked-Questions#how-do-i-install-20-if-im-not-using-the-latest-docker-version
 apt-get install -y --allow-downgrades -o Dpkg::Options::="--force-confold" \
-  nvidia-docker2 \
-  nvidia-container-runtime \
-  docker-ce
+  nvidia-docker2=2.0.3+docker18.09.4-1 \
+  nvidia-container-runtime=2.0.0+docker18.09.4-1 \
+  docker-ce=5:18.09.4~3-0~debian-stretch
 
 # Disable a few things that break docker-ce/gpu support upon reboot:
 #  Upon boot, the kops-configuration.service systemd unit sets up and starts
@@ -78,3 +84,6 @@ apt-get install -y --allow-downgrades -o Dpkg::Options::="--force-confold" \
 #  Permanently disable these systemd units via masking.
 systemctl mask cloud-init.service
 systemctl mask kops-configuration.service
+
+# Restore protokube and protokube will bring up kubelet
+systemctl start protokube

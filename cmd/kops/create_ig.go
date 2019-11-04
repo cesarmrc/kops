@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -33,9 +33,9 @@ import (
 	"k8s.io/kops/pkg/kopscodecs"
 	"k8s.io/kops/pkg/try"
 	"k8s.io/kops/upup/pkg/fi/cloudup"
-	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	"k8s.io/kubernetes/pkg/kubectl/cmd/util/editor"
 	"k8s.io/kubernetes/pkg/kubectl/util/i18n"
+	"k8s.io/kubernetes/pkg/kubectl/util/templates"
 )
 
 type CreateInstanceGroupOptions struct {
@@ -212,7 +212,7 @@ func RunCreateInstanceGroup(f *util.Factory, cmd *cobra.Command, args []string, 
 			return fmt.Errorf("error launching editor: %v", err)
 		}
 
-		obj, _, err := kopscodecs.ParseVersionedYaml(edited)
+		obj, _, err := kopscodecs.Decode(edited, nil)
 		if err != nil {
 			return fmt.Errorf("error parsing yaml: %v", err)
 		}

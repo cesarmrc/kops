@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -28,13 +28,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/ec2metadata"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/golang/glog"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kops/nodeup/pkg/distros"
 	"k8s.io/kops/nodeup/pkg/model"
 	api "k8s.io/kops/pkg/apis/kops"
@@ -48,12 +41,20 @@ import (
 	"k8s.io/kops/upup/pkg/fi/secrets"
 	"k8s.io/kops/upup/pkg/fi/utils"
 	"k8s.io/kops/util/pkg/vfs"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/ec2metadata"
+	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/ec2"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog"
 )
 
 // MaxTaskDuration is the amount of time to keep trying for; we retry for a long time - there is not really any great fallback
 const MaxTaskDuration = 365 * 24 * time.Hour
 
-// NodeUpCommand the configiruation for nodeup
+// NodeUpCommand is the configuration for nodeup
 type NodeUpCommand struct {
 	CacheDir       string
 	ConfigLocation string
@@ -158,7 +159,7 @@ func (c *NodeUpCommand) Run(out io.Writer) error {
 			return fmt.Errorf("error parsing InstanceGroup %q: %v", instanceGroupLocation, err)
 		}
 	} else {
-		glog.Warningf("No instance group defined in nodeup config")
+		klog.Warningf("No instance group defined in nodeup config")
 	}
 
 	err := evaluateSpec(c.cluster)
@@ -177,8 +178,8 @@ func (c *NodeUpCommand) Run(out io.Writer) error {
 	nodeTags.Insert(osTags...)
 	nodeTags.Insert(c.config.Tags...)
 
-	glog.Infof("Config tags: %v", c.config.Tags)
-	glog.Infof("OS tags: %v", osTags)
+	klog.Infof("Config tags: %v", c.config.Tags)
+	klog.Infof("OS tags: %v", osTags)
 
 	modelContext := &model.NodeupModelContext{
 		Architecture:  model.ArchitectureAmd64,
@@ -190,7 +191,7 @@ func (c *NodeUpCommand) Run(out io.Writer) error {
 	}
 
 	if c.cluster.Spec.SecretStore != "" {
-		glog.Infof("Building SecretStore at %q", c.cluster.Spec.SecretStore)
+		klog.Infof("Building SecretStore at %q", c.cluster.Spec.SecretStore)
 		p, err := vfs.Context.BuildVfsPath(c.cluster.Spec.SecretStore)
 		if err != nil {
 			return fmt.Errorf("error building secret store path: %v", err)
@@ -202,7 +203,7 @@ func (c *NodeUpCommand) Run(out io.Writer) error {
 	}
 
 	if c.cluster.Spec.KeyStore != "" {
-		glog.Infof("Building KeyStore at %q", c.cluster.Spec.KeyStore)
+		klog.Infof("Building KeyStore at %q", c.cluster.Spec.KeyStore)
 		p, err := vfs.Context.BuildVfsPath(c.cluster.Spec.KeyStore)
 		if err != nil {
 			return fmt.Errorf("error building key store path: %v", err)
@@ -222,8 +223,11 @@ func (c *NodeUpCommand) Run(out io.Writer) error {
 	}
 
 	loader := NewLoader(c.config, c.cluster, assetStore, nodeTags)
+	loader.Builders = append(loader.Builders, &model.NTPBuilder{NodeupModelContext: modelContext})
+	loader.Builders = append(loader.Builders, &model.MiscUtilsBuilder{NodeupModelContext: modelContext})
 	loader.Builders = append(loader.Builders, &model.DirectoryBuilder{NodeupModelContext: modelContext})
 	loader.Builders = append(loader.Builders, &model.UpdateServiceBuilder{NodeupModelContext: modelContext})
+	loader.Builders = append(loader.Builders, &model.VolumesBuilder{NodeupModelContext: modelContext})
 	loader.Builders = append(loader.Builders, &model.DockerBuilder{NodeupModelContext: modelContext})
 	loader.Builders = append(loader.Builders, &model.ProtokubeBuilder{NodeupModelContext: modelContext})
 	loader.Builders = append(loader.Builders, &model.CloudConfigBuilder{NodeupModelContext: modelContext})
@@ -243,6 +247,7 @@ func (c *NodeUpCommand) Run(out io.Writer) error {
 	loader.Builders = append(loader.Builders, &model.KubeAPIServerBuilder{NodeupModelContext: modelContext})
 	loader.Builders = append(loader.Builders, &model.KubeControllerManagerBuilder{NodeupModelContext: modelContext})
 	loader.Builders = append(loader.Builders, &model.KubeSchedulerBuilder{NodeupModelContext: modelContext})
+	loader.Builders = append(loader.Builders, &model.EtcdManagerTLSBuilder{NodeupModelContext: modelContext})
 	if c.cluster.Spec.Networking.Kuberouter == nil {
 		loader.Builders = append(loader.Builders, &model.KubeProxyBuilder{NodeupModelContext: modelContext})
 	} else {
@@ -290,14 +295,14 @@ func (c *NodeUpCommand) Run(out io.Writer) error {
 
 	for i, image := range c.config.Images {
 		taskMap["LoadImage."+strconv.Itoa(i)] = &nodetasks.LoadImageTask{
-			Source: image.Source,
-			Hash:   image.Hash,
+			Sources: image.Sources,
+			Hash:    image.Hash,
 		}
 	}
 	if c.config.ProtokubeImage != nil {
 		taskMap["LoadImage.protokube"] = &nodetasks.LoadImageTask{
-			Source: c.config.ProtokubeImage.Source,
-			Hash:   c.config.ProtokubeImage.Hash,
+			Sources: c.config.ProtokubeImage.Sources,
+			Hash:    c.config.ProtokubeImage.Hash,
 		}
 	}
 
@@ -325,7 +330,7 @@ func (c *NodeUpCommand) Run(out io.Writer) error {
 
 	context, err := fi.NewContext(target, nil, cloud, keyStore, secretStore, configBase, checkExisting, taskMap)
 	if err != nil {
-		glog.Exitf("error building context: %v", err)
+		klog.Exitf("error building context: %v", err)
 	}
 	defer context.Close()
 
@@ -334,12 +339,12 @@ func (c *NodeUpCommand) Run(out io.Writer) error {
 
 	err = context.RunTasks(options)
 	if err != nil {
-		glog.Exitf("error running tasks: %v", err)
+		klog.Exitf("error running tasks: %v", err)
 	}
 
 	err = target.Finish(taskMap)
 	if err != nil {
-		glog.Exitf("error closing target: %v", err)
+		klog.Exitf("error closing target: %v", err)
 	}
 
 	return nil
@@ -389,7 +394,7 @@ func evaluateSecurityGroups(vpcId string) ([]string, error) {
 	}
 	s.Handlers.Send.PushFront(func(r *request.Request) {
 		// Log requests
-		glog.V(4).Infof("AWS API Request: %s/%s", r.ClientInfo.ServiceName, r.Operation.Name)
+		klog.V(4).Infof("AWS API Request: %s/%s", r.ClientInfo.ServiceName, r.Operation.Name)
 	})
 
 	metadata := ec2metadata.New(s, config)
@@ -438,25 +443,43 @@ func evaluateHostnameOverride(hostnameOverride string) (string, error) {
 	k = strings.ToLower(k)
 
 	if k == "@aws" {
-		// We recognize @aws as meaning "the local-hostname from the aws metadata service"
-		vBytes, err := vfs.Context.ReadFile("metadata://aws/meta-data/local-hostname")
+		// We recognize @aws as meaning "the private DNS name from AWS", to generate this we need to get a few pieces of information
+		azBytes, err := vfs.Context.ReadFile("metadata://aws/meta-data/placement/availability-zone")
 		if err != nil {
-			return "", fmt.Errorf("error reading local hostname from AWS metadata: %v", err)
+			return "", fmt.Errorf("error reading availability zone from AWS metadata: %v", err)
 		}
 
-		// The local-hostname gets it's hostname from the AWS DHCP Option Set, which
-		// may provide multiple hostnames separated by spaces. For now just choose
-		// the first one as the hostname.
-		domains := strings.Fields(string(vBytes))
-		if len(domains) == 0 {
-			glog.Warningf("Local hostname from AWS metadata service was empty")
-			return "", nil
-		} else {
-			domain := domains[0]
-			glog.Infof("Using hostname from AWS metadata service: %s", domain)
-
-			return domain, nil
+		instanceIDBytes, err := vfs.Context.ReadFile("metadata://aws/meta-data/instance-id")
+		if err != nil {
+			return "", fmt.Errorf("error reading instance-id from AWS metadata: %v", err)
 		}
+		instanceID := string(instanceIDBytes)
+
+		config := aws.NewConfig()
+		config = config.WithCredentialsChainVerboseErrors(true)
+
+		s, err := session.NewSession(config)
+		if err != nil {
+			return "", fmt.Errorf("error starting new AWS session: %v", err)
+		}
+
+		svc := ec2.New(s, config.WithRegion(string(azBytes[:len(azBytes)-1])))
+
+		result, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
+			InstanceIds: []*string{&instanceID},
+		})
+		if err != nil {
+			return "", fmt.Errorf("error describing instances: %v", err)
+		}
+
+		if len(result.Reservations) != 1 {
+			return "", fmt.Errorf("Too many reservations returned for the single instance-id")
+		}
+
+		if len(result.Reservations[0].Instances) != 1 {
+			return "", fmt.Errorf("Too many instances returned for the single instance-id")
+		}
+		return *(result.Reservations[0].Instances[0].PrivateDnsName), nil
 	}
 
 	if k == "@digitalocean" {
@@ -469,6 +492,28 @@ func evaluateHostnameOverride(hostnameOverride string) (string, error) {
 		hostname := string(vBytes)
 		if hostname == "" {
 			return "", errors.New("private IP for digitalocean droplet was empty")
+		}
+
+		return hostname, nil
+	}
+
+	if k == "@alicloud" {
+		// @alicloud means to use the "{az}.{instance-id}" of a instance as the hostname override
+		azBytes, err := vfs.Context.ReadFile("metadata://alicloud/zone-id")
+		if err != nil {
+			return "", fmt.Errorf("error reading zone-id from Alicloud metadata: %v", err)
+		}
+		az := string(azBytes)
+
+		instanceIDBytes, err := vfs.Context.ReadFile("metadata://alicloud/instance-id")
+		if err != nil {
+			return "", fmt.Errorf("error reading instance-id from Alicloud metadata: %v", err)
+		}
+		instanceID := string(instanceIDBytes)
+
+		hostname := fmt.Sprintf("%s.%s", az, instanceID)
+		if hostname == "" {
+			return "", errors.New("hostname for Alicloud ECS was empty")
 		}
 
 		return hostname, nil
@@ -491,14 +536,14 @@ func evaluateBindAddress(bindAddress string) (string, error) {
 		// For now just choose the first one.
 		ips := strings.Fields(string(vBytes))
 		if len(ips) == 0 {
-			glog.Warningf("Local IP from AWS metadata service was empty")
+			klog.Warningf("Local IP from AWS metadata service was empty")
 			return "", nil
-		} else {
-			ip := ips[0]
-			glog.Infof("Using IP from AWS metadata service: %s", ip)
-
-			return ip, nil
 		}
+
+		ip := ips[0]
+		klog.Infof("Using IP from AWS metadata service: %s", ip)
+
+		return ip, nil
 	}
 
 	if net.ParseIP(bindAddress) == nil {
@@ -519,7 +564,7 @@ func evaluateDockerSpecStorage(spec *api.DockerConfig) error {
 			}
 			supported, err := kernelHasFilesystem(fs)
 			if err != nil {
-				glog.Warningf("error checking if %q filesystem is supported: %v", fs, err)
+				klog.Warningf("error checking if %q filesystem is supported: %v", fs, err)
 				continue
 			}
 
@@ -528,28 +573,28 @@ func evaluateDockerSpecStorage(spec *api.DockerConfig) error {
 				// aufs -> aufs
 				module := fs
 				if err = modprobe(fs); err != nil {
-					glog.Warningf("error running `modprobe %q`: %v", module, err)
+					klog.Warningf("error running `modprobe %q`: %v", module, err)
 				}
 			}
 
 			supported, err = kernelHasFilesystem(fs)
 			if err != nil {
-				glog.Warningf("error checking if %q filesystem is supported: %v", fs, err)
+				klog.Warningf("error checking if %q filesystem is supported: %v", fs, err)
 				continue
 			}
 
 			if supported {
-				glog.Infof("Using supported docker storage %q", opt)
+				klog.Infof("Using supported docker storage %q", opt)
 				spec.Storage = fi.String(opt)
 				return nil
 			}
 
-			glog.Warningf("%q docker storage was specified, but filesystem is not supported", opt)
+			klog.Warningf("%q docker storage was specified, but filesystem is not supported", opt)
 		}
 
 		// Just in case we don't recognize the driver?
 		// TODO: Is this the best behaviour
-		glog.Warningf("No storage module was supported from %q, will default to %q", storage, precedence[0])
+		klog.Warningf("No storage module was supported from %q, will default to %q", storage, precedence[0])
 		spec.Storage = fi.String(precedence[0])
 		return nil
 	}
@@ -579,14 +624,14 @@ func kernelHasFilesystem(fs string) (bool, error) {
 
 // modprobe will exec `modprobe <module>`
 func modprobe(module string) error {
-	glog.Infof("Doing modprobe for module %v", module)
+	klog.Infof("Doing modprobe for module %v", module)
 	out, err := exec.Command("/sbin/modprobe", module).CombinedOutput()
 	outString := string(out)
 	if err != nil {
 		return fmt.Errorf("modprobe for module %q failed (%v): %s", module, err, outString)
 	}
 	if outString != "" {
-		glog.Infof("Output from modprobe %s:\n%s", module, outString)
+		klog.Infof("Output from modprobe %s:\n%s", module, outString)
 	}
 	return nil
 }
@@ -597,7 +642,7 @@ func loadKernelModules(context *model.NodeupModelContext) error {
 	err := modprobe("br_netfilter")
 	if err != nil {
 		// TODO: Return error in 1.11 (too risky for 1.10)
-		glog.Warningf("error loading br_netfilter module: %v", err)
+		klog.Warningf("error loading br_netfilter module: %v", err)
 	}
 	// TODO: Add to /etc/modules-load.d/ ?
 	return nil

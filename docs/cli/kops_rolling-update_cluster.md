@@ -67,7 +67,7 @@ kops rolling-update cluster [flags]
 ### Options
 
 ```
-      --bastion-interval duration      Time to wait between restarting bastions (default 5m0s)
+      --bastion-interval duration      Time to wait between restarting bastions (default 15s)
       --cloudonly                      Perform rolling update without confirming progress with k8s
       --fail-on-drain-error            The rolling-update will fail if draining a node fails. (default true)
       --fail-on-validate-error         The rolling-update will fail if the cluster fails to validate. (default true)
@@ -76,8 +76,10 @@ kops rolling-update cluster [flags]
       --instance-group strings         List of instance groups to update (defaults to all if not specified)
       --instance-group-roles strings   If specified, only instance groups of the specified role will be updated (e.g. Master,Node,Bastion)
   -i, --interactive                    Prompt to continue after each instance is updated
-      --master-interval duration       Time to wait between restarting masters (default 5m0s)
-      --node-interval duration         Time to wait between restarting nodes (default 4m0s)
+      --master-interval duration       Time to wait between restarting masters (default 15s)
+      --node-interval duration         Time to wait between restarting nodes (default 15s)
+      --post-drain-delay duration      Time to wait after draining each node (default 5s)
+      --validation-timeout duration    Maximum time to wait for a cluster to validate (default 15m0s)
   -y, --yes                            Perform rolling update immediately, without --yes rolling-update executes a dry-run
 ```
 
@@ -88,11 +90,15 @@ kops rolling-update cluster [flags]
       --config string                    yaml config file (default is $HOME/.kops.yaml)
       --log_backtrace_at traceLocation   when logging hits line file:N, emit a stack trace (default :0)
       --log_dir string                   If non-empty, write log files in this directory
-      --logtostderr                      log to standard error instead of files (default false)
+      --log_file string                  If non-empty, use this log file
+      --log_file_max_size uint           Defines the maximum size a log file can grow to. Unit is megabytes. If the value is 0, the maximum file size is unlimited. (default 1800)
+      --logtostderr                      log to standard error instead of files (default true)
       --name string                      Name of cluster. Overrides KOPS_CLUSTER_NAME environment variable
+      --skip_headers                     If true, avoid header prefixes in the log messages
+      --skip_log_headers                 If true, avoid headers when opening log files
       --state string                     Location of state storage (kops 'config' file). Overrides KOPS_STATE_STORE environment variable
       --stderrthreshold severity         logs at or above this threshold go to stderr (default 2)
-  -v, --v Level                          log level for V logs
+  -v, --v Level                          number for the log level verbosity
       --vmodule moduleSpec               comma-separated list of pattern=N settings for file-filtered logging
 ```
 

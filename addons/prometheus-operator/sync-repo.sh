@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright 2018 The Kubernetes Authors.
+# Copyright 2019 The Kubernetes Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,15 +18,15 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-P_OPERATOR_VERSION=${1:-"v0.19.0"}
+P_OPERATOR_VERSION=${1:-"v0.26.0"}
 P_OPERATOR_ADDON_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd ${P_OPERATOR_ADDON_DIR}
-git clone --depth 1 https://github.com/coreos/prometheus-operator/ 
+git clone -b ${P_OPERATOR_VERSION} --depth 1 https://github.com/coreos/prometheus-operator
 cp prometheus-operator/bundle.yaml ${P_OPERATOR_VERSION}.yaml
 mkdir tmp
 cp prometheus-operator/contrib/kube-prometheus/manifests/* tmp
 for i in `ls tmp`
-do 
+do
   echo "---" >> ${P_OPERATOR_VERSION}.yaml
   cat tmp/$i >> ${P_OPERATOR_VERSION}.yaml
 done

@@ -1,6 +1,6 @@
 kind: Cluster
 metadata:
-  creationTimestamp: 2016-12-10T22:42:27Z
+  creationTimestamp: "2016-12-10T22:42:27Z"
   name: minimal.example.com
 spec:
   additionalSans:
@@ -13,15 +13,19 @@ spec:
   cloudProvider: aws
   configBase: memfs://clusters.example.com/minimal.example.com
   etcdClusters:
-  - etcdMembers:
+  - cpuRequest: 200m
+    etcdMembers:
     - name: us-test-1a
       zone: us-test-1a
+    memoryRequest: 100Mi
     name: main
-  - etcdMembers:
+  - cpuRequest: 200m
+    etcdMembers:
     - name: us-test-1a
       zone: us-test-1a
+    memoryRequest: 100Mi
     name: events
-  kubernetesVersion: v1.4.12
+  kubernetesVersion: v1.14.0
   masterInternalName: api.internal.minimal.example.com
   masterPublicName: api.minimal.example.com
   networkCIDR: 172.20.0.0/16
@@ -44,7 +48,7 @@ spec:
 
 kind: InstanceGroup
 metadata:
-  creationTimestamp: 2016-12-10T22:42:28Z
+  creationTimestamp: "2016-12-10T22:42:28Z"
   name: nodes
   labels:
     kops.k8s.io/cluster: minimal.example.com
@@ -62,7 +66,7 @@ spec:
 
 kind: InstanceGroup
 metadata:
-  creationTimestamp: 2016-12-10T22:42:28Z
+  creationTimestamp: "2016-12-10T22:42:28Z"
   name: master-us-test-1a
   labels:
     kops.k8s.io/cluster: minimal.example.com
@@ -75,5 +79,3 @@ spec:
   role: Master
   zones:
   - us-test-1a
-
-

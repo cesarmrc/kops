@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,10 +23,9 @@ import (
 	"strconv"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/golang/glog"
-
+	"k8s.io/klog"
 	"k8s.io/kops/util/pkg/reflectutils"
 )
 
@@ -47,17 +46,17 @@ func BuildFlagsList(options interface{}) ([]string, error) {
 
 	walker := func(path string, field *reflect.StructField, val reflect.Value) error {
 		if field == nil {
-			glog.V(8).Infof("ignoring non-field: %s", path)
+			klog.V(8).Infof("ignoring non-field: %s", path)
 			return nil
 		}
 		tag := field.Tag.Get("flag")
 		if tag == "" {
-			glog.V(4).Infof("not writing field with no flag tag: %s", path)
+			klog.V(4).Infof("not writing field with no flag tag: %s", path)
 			// We want to descend - it could be a structure containing flags
 			return nil
 		}
 		if tag == "-" {
-			glog.V(4).Infof("skipping field with %q flag tag: %s", tag, path)
+			klog.V(4).Infof("skipping field with %q flag tag: %s", tag, path)
 			return reflectutils.SkipReflection
 		}
 
@@ -162,7 +161,15 @@ func BuildFlagsList(options interface{}) ([]string, error) {
 				}
 			}
 
-		case bool, int, int32, int64, float32, float64:
+		case bool, int, int32, int64:
+			vString := fmt.Sprintf("%v", v)
+			if vString != flagEmpty {
+				flag = fmt.Sprintf("--%s=%s", flagName, vString)
+			}
+
+		case float32, float64:
+			// Because these types don't round-trip, we should use resource.Quantity instead
+			klog.Warningf("use of unsafe float type for flag %q; use resource.Quantity instead", flagName)
 			vString := fmt.Sprintf("%v", v)
 			if vString != flagEmpty {
 				flag = fmt.Sprintf("--%s=%s", flagName, vString)
@@ -178,6 +185,13 @@ func BuildFlagsList(options interface{}) ([]string, error) {
 				vString = "0s"
 			}
 
+			if vString != flagEmpty {
+				flag = fmt.Sprintf("--%s=%s", flagName, vString)
+			}
+
+		case resource.Quantity:
+			// Format as a floating point value (i.e. 3.14, not 3140m)
+			vString := v.AsDec().String()
 			if vString != flagEmpty {
 				flag = fmt.Sprintf("--%s=%s", flagName, vString)
 			}

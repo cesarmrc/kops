@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,7 +16,10 @@ limitations under the License.
 
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 // KubeletConfigSpec defines the kubelet configuration
 type KubeletConfigSpec struct {
@@ -34,6 +37,10 @@ type KubeletConfigSpec struct {
 	TLSCertFile string `json:"tlsCertFile,omitempty" flag:"tls-cert-file"`
 	// TODO: Remove unused TLSPrivateKeyFile
 	TLSPrivateKeyFile string `json:"tlsPrivateKeyFile,omitempty" flag:"tls-private-key-file"`
+	// TLSCipherSuites indicates the allowed TLS cipher suite
+	TLSCipherSuites []string `json:"tlsCipherSuites,omitempty" flag:"tls-cipher-suites"`
+	// TLSMinVersion indicates the minimum TLS version allowed
+	TLSMinVersion string `json:"tlsMinVersion,omitempty" flag:"tls-min-version"`
 	// KubeconfigPath is the path of kubeconfig for the kubelet
 	KubeconfigPath string `json:"kubeconfigPath,omitempty" flag:"kubeconfig"`
 	// RequireKubeconfig indicates a kubeconfig is required
@@ -77,7 +84,7 @@ type KubeletConfigSpec struct {
 	SystemCgroups string `json:"systemCgroups,omitempty" flag:"system-cgroups"`
 	// cgroupRoot is the root cgroup to use for pods. This is handled by the container runtime on a best effort basis.
 	CgroupRoot string `json:"cgroupRoot,omitempty" flag:"cgroup-root"`
-	// configureCBR0 enables the kublet to configure cbr0 based on Node.Spec.PodCIDR.
+	// configureCBR0 enables the kubelet to configure cbr0 based on Node.Spec.PodCIDR.
 	ConfigureCBR0 *bool `json:"configureCbr0,omitempty" flag:"configure-cbr0"`
 	// How should the kubelet configure the container bridge for hairpin packets.
 	// Setting this flag allows endpoints in a Service to loadbalance back to
@@ -142,7 +149,7 @@ type KubeletConfigSpec struct {
 	EvictionMaxPodGracePeriod int32 `json:"evictionMaxPodGracePeriod,omitempty" flag:"eviction-max-pod-grace-period" flag-empty:"0"`
 	// Comma-delimited list of minimum reclaims (e.g. imagefs.available=2Gi) that describes the minimum amount of resource the kubelet will reclaim when performing a pod eviction if that resource is under pressure.
 	EvictionMinimumReclaim string `json:"evictionMinimumReclaim,omitempty" flag:"eviction-minimum-reclaim"`
-	// The full path of the directory in which to search for additional third party volume plugins
+	// The full path of the directory in which to search for additional third party volume plugins (this path must be writeable, dependent on your choice of OS)
 	VolumePluginDirectory string `json:"volumePluginDirectory,omitempty" flag:"volume-plugin-dir"`
 	// Taints to add when registering a node in the cluster
 	Taints []string `json:"taints,omitempty" flag:"register-with-taints"`
@@ -165,7 +172,10 @@ type KubeletConfigSpec struct {
 	// Tells the Kubelet to fail to start if swap is enabled on the node.
 	FailSwapOn *bool `json:"failSwapOn,omitempty" flag:"fail-swap-on"`
 	// ExperimentalAllowedUnsafeSysctls are passed to the kubelet config to whitelist allowable sysctls
-	ExperimentalAllowedUnsafeSysctls []string `json:"experimental_allowed_unsafe_sysctls,omitempty" flag:"experimental-allowed-unsafe-sysctls"`
+	// Was promoted to beta and renamed. https://github.com/kubernetes/kubernetes/pull/63717
+	ExperimentalAllowedUnsafeSysctls []string `json:"experimentalAllowedUnsafeSysctls,omitempty" flag:"experimental-allowed-unsafe-sysctls"`
+	// AllowedUnsafeSysctls are passed to the kubelet config to whitelist allowable sysctls
+	AllowedUnsafeSysctls []string `json:"allowedUnsafeSysctls,omitempty" flag:"allowed-unsafe-sysctls"`
 	// StreamingConnectionIdleTimeout is the maximum time a streaming connection can be idle before the connection is automatically closed
 	StreamingConnectionIdleTimeout *metav1.Duration `json:"streamingConnectionIdleTimeout,omitempty" flag:"streaming-connection-idle-timeout"`
 	// DockerDisableSharedPID uses a shared PID namespace for containers in a pod.
@@ -176,6 +186,16 @@ type KubeletConfigSpec struct {
 	AuthenticationTokenWebhook *bool `json:"authenticationTokenWebhook,omitempty" flag:"authentication-token-webhook"`
 	// AuthenticationTokenWebhook sets the duration to cache responses from the webhook token authenticator. Default is 2m. (default 2m0s)
 	AuthenticationTokenWebhookCacheTTL *metav1.Duration `json:"authenticationTokenWebhookCacheTtl,omitempty" flag:"authentication-token-webhook-cache-ttl"`
+	// CPUCFSQuota enables CPU CFS quota enforcement for containers that specify CPU limits
+	CPUCFSQuota *bool `json:"cpuCFSQuota,omitempty" flag:"cpu-cfs-quota"`
+	// CPUCFSQuotaPeriod sets CPU CFS quota period value, cpu.cfs_period_us, defaults to Linux Kernel default
+	CPUCFSQuotaPeriod *metav1.Duration `json:"cpuCFSQuotaPeriod,omitempty" flag:"cpu-cfs-quota-period"`
+	// CpuManagerPolicy allows for changing the default policy of None to static
+	CpuManagerPolicy string `json:"cpuManagerPolicy,omitempty" flag:"cpu-manager-policy"`
+	// RegistryPullQPS if > 0, limit registry pull QPS to this value.  If 0, unlimited. (default 5)
+	RegistryPullQPS *int32 `json:"registryPullQPS,omitempty" flag:"registry-qps"`
+	//RegistryBurst Maximum size of a bursty pulls, temporarily allows pulls to burst to this number, while still not exceeding registry-qps. Only used if --registry-qps > 0 (default 10)
+	RegistryBurst *int32 `json:"registryBurst,omitempty" flag:"registry-burst"`
 }
 
 // KubeProxyConfig defines the configuration for a proxy
@@ -200,6 +220,8 @@ type KubeProxyConfig struct {
 	BindAddress string `json:"bindAddress,omitempty" flag:"bind-address"`
 	// Master is the address of the Kubernetes API server (overrides any value in kubeconfig)
 	Master string `json:"master,omitempty" flag:"master"`
+	// MetricsBindAddress is the IP address for the metrics server to serve on
+	MetricsBindAddress *string `json:"metricsBindAddress,omitempty" flag:"metrics-bind-address"`
 	// Enabled allows enabling or disabling kube-proxy
 	Enabled *bool `json:"enabled,omitempty"`
 	// Which proxy mode to use: (userspace, iptables(default), ipvs)
@@ -246,13 +268,17 @@ type KubeAPIServerConfig struct {
 	EnableAggregatorRouting *bool `json:"enableAggregatorRouting,omitempty" flag:"enable-aggregator-routing"`
 	// Deprecated: AdmissionControl is a list of admission controllers to use
 	AdmissionControl []string `json:"admissionControl,omitempty" flag:"admission-control"`
+	// AppendAdmissionPlugins appends list of enabled admission plugins
+	AppendAdmissionPlugins []string `json:"appendAdmissionPlugins,omitempty"`
 	// EnableAdmissionPlugins is a list of enabled admission plugins
 	EnableAdmissionPlugins []string `json:"enableAdmissionPlugins,omitempty" flag:"enable-admission-plugins"`
 	// DisableAdmissionPlugins is a list of disabled admission plugins
 	DisableAdmissionPlugins []string `json:"disableAdmissionPlugins,omitempty" flag:"disable-admission-plugins"`
+	// AdmissionControlConfigFile is the location of the admission-control-config-file
+	AdmissionControlConfigFile string `json:"admissionControlConfigFile,omitempty" flag:"admission-control-config-file"`
 	// ServiceClusterIPRange is the service address range
 	ServiceClusterIPRange string `json:"serviceClusterIPRange,omitempty" flag:"service-cluster-ip-range"`
-	// Passed as --service-node-port-range to kube-apiserver. Expects 'startPort-endPort' format. Eg. 30000-33000
+	// Passed as --service-node-port-range to kube-apiserver. Expects 'startPort-endPort' format e.g. 30000-33000
 	ServiceNodePortRange string `json:"serviceNodePortRange,omitempty" flag:"service-node-port-range"`
 	// EtcdServers is a list of the etcd service to connect
 	EtcdServers []string `json:"etcdServers,omitempty" flag:"etcd-servers"`
@@ -272,6 +298,10 @@ type KubeAPIServerConfig struct {
 	TLSCertFile string `json:"tlsCertFile,omitempty" flag:"tls-cert-file"`
 	// TODO: Remove unused TLSPrivateKeyFile
 	TLSPrivateKeyFile string `json:"tlsPrivateKeyFile,omitempty" flag:"tls-private-key-file"`
+	// TLSCipherSuites indicates the allowed TLS cipher suite
+	TLSCipherSuites []string `json:"tlsCipherSuites,omitempty" flag:"tls-cipher-suites"`
+	// TLSMinVersion indicates the minimum TLS version allowed
+	TLSMinVersion string `json:"tlsMinVersion,omitempty" flag:"tls-min-version"`
 	// TODO: Remove unused TokenAuthFile
 	TokenAuthFile string `json:"tokenAuthFile,omitempty" flag:"token-auth-file"`
 	// AllowPrivileged indicates if we can run privileged containers
@@ -311,6 +341,10 @@ type KubeAPIServerConfig struct {
 	// OIDCClientID is the client ID for the OpenID Connect client, must be set
 	// if oidc-issuer-url is set.
 	OIDCClientID *string `json:"oidcClientID,omitempty" flag:"oidc-client-id"`
+	// A key=value pair that describes a required claim in the ID Token.
+	// If set, the claim is verified to be present in the ID Token with a matching value.
+	// Repeat this flag to specify multiple claims.
+	OIDCRequiredClaim []string `json:"oidcRequiredClaim,omitempty" flag:"oidc-required-claim,repeat"`
 	// OIDCCAFile if set, the OpenID server's certificate will be verified by one
 	// of the authorities in the oidc-ca-file
 	OIDCCAFile *string `json:"oidcCAFile,omitempty" flag:"oidc-ca-file"`
@@ -328,14 +362,38 @@ type KubeAPIServerConfig struct {
 	AuditLogMaxBackups *int32 `json:"auditLogMaxBackups,omitempty" flag:"audit-log-maxbackup"`
 	// The maximum size in megabytes of the audit log file before it gets rotated. Defaults to 100MB.
 	AuditLogMaxSize *int32 `json:"auditLogMaxSize,omitempty" flag:"audit-log-maxsize"`
-	// AuditPolicyFile is the full path to a advanced audit configuration file a.g. /srv/kubernetes/audit.conf
+	// AuditPolicyFile is the full path to a advanced audit configuration file e.g. /srv/kubernetes/audit.conf
 	AuditPolicyFile string `json:"auditPolicyFile,omitempty" flag:"audit-policy-file"`
+	// AuditWebhookBatchBufferSize is The size of the buffer to store events before batching and writing. Only used in batch mode. (default 10000)
+	AuditWebhookBatchBufferSize *int32 `json:"auditWebhookBatchBufferSize,omitempty" flag:"audit-webhook-batch-buffer-size"`
+	// AuditWebhookBatchMaxSize is The maximum size of a batch. Only used in batch mode. (default 400)
+	AuditWebhookBatchMaxSize *int32 `json:"auditWebhookBatchMaxSize,omitempty" flag:"audit-webhook-batch-max-size"`
+	// AuditWebhookBatchMaxWait is The amount of time to wait before force writing the batch that hadn't reached the max size. Only used in batch mode. (default 30s)
+	AuditWebhookBatchMaxWait *metav1.Duration `json:"auditWebhookBatchMaxWait,omitempty" flag:"audit-webhook-batch-max-wait"`
+	// AuditWebhookBatchThrottleBurst is Maximum number of requests sent at the same moment if ThrottleQPS was not utilized before. Only used in batch mode. (default 15)
+	AuditWebhookBatchThrottleBurst *int32 `json:"auditWebhookBatchThrottleBurst,omitempty" flag:"audit-webhook-batch-throttle-burst"`
+	// AuditWebhookBatchThrottleEnable is Whether batching throttling is enabled. Only used in batch mode. (default true)
+	AuditWebhookBatchThrottleEnable *bool `json:"auditWebhookBatchThrottleEnable,omitempty" flag:"audit-webhook-batch-throttle-enable"`
+	// AuditWebhookBatchThrottleQps is Maximum average number of batches per second. Only used in batch mode. (default 10)
+	AuditWebhookBatchThrottleQps *resource.Quantity `json:"auditWebhookBatchThrottleQps,omitempty" flag:"audit-webhook-batch-throttle-qps"`
+	// AuditWebhookConfigFile is Path to a kubeconfig formatted file that defines the audit webhook configuration. Requires the 'AdvancedAuditing' feature gate.
+	AuditWebhookConfigFile string `json:"auditWebhookConfigFile,omitempty" flag:"audit-webhook-config-file"`
+	// AuditWebhookInitialBackoff is The amount of time to wait before retrying the first failed request. (default 10s)
+	AuditWebhookInitialBackoff *metav1.Duration `json:"auditWebhookInitialBackoff,omitempty" flag:"audit-webhook-initial-backoff"`
+	// AuditWebhookMode is Strategy for sending audit events. Blocking indicates sending events should block server responses. Batch causes the backend to buffer and write events asynchronously. Known modes are batch,blocking. (default "batch")
+	AuditWebhookMode string `json:"auditWebhookMode,omitempty" flag:"audit-webhook-mode"`
 	// File with webhook configuration for token authentication in kubeconfig format. The API server will query the remote service to determine authentication for bearer tokens.
 	AuthenticationTokenWebhookConfigFile *string `json:"authenticationTokenWebhookConfigFile,omitempty" flag:"authentication-token-webhook-config-file"`
 	// The duration to cache responses from the webhook token authenticator. Default is 2m. (default 2m0s)
 	AuthenticationTokenWebhookCacheTTL *metav1.Duration `json:"authenticationTokenWebhookCacheTtl,omitempty" flag:"authentication-token-webhook-cache-ttl"`
 	// AuthorizationMode is the authorization mode the kubeapi is running in
 	AuthorizationMode *string `json:"authorizationMode,omitempty" flag:"authorization-mode"`
+	// File with webhook configuration for authorization in kubeconfig format. The API server will query the remote service to determine whether to authorize the request.
+	AuthorizationWebhookConfigFile *string `json:"authorizationWebhookConfigFile,omitempty" flag:"authorization-webhook-config-file"`
+	// The duration to cache authorized responses from the webhook token authorizer. Default is 5m. (default 5m0s)
+	AuthorizationWebhookCacheAuthorizedTTL *metav1.Duration `json:"authorizationWebhookCacheAuthorizedTtl,omitempty" flag:"authorization-webhook-cache-authorized-ttl"`
+	// The duration to cache authorized responses from the webhook token authorizer. Default is 30s. (default 30s)
+	AuthorizationWebhookCacheUnauthorizedTTL *metav1.Duration `json:"authorizationWebhookCacheUnauthorizedTtl,omitempty" flag:"authorization-webhook-cache-unauthorized-ttl"`
 	// AuthorizationRBACSuperUser is the name of the superuser for default rbac
 	AuthorizationRBACSuperUser *string `json:"authorizationRbacSuperUser,omitempty" flag:"authorization-rbac-super-user"`
 	// ExperimentalEncryptionProviderConfig enables encryption at rest for secrets.
@@ -358,6 +416,9 @@ type KubeAPIServerConfig struct {
 	// MaxMutatingRequestsInflight The maximum number of mutating requests in flight at a given time. Defaults to 200
 	MaxMutatingRequestsInflight int32 `json:"maxMutatingRequestsInflight,omitempty" flag:"max-mutating-requests-inflight" flag-empty:"0"`
 
+	// HTTP2MaxStreamsPerConnection sets the limit that the server gives to clients for the maximum number of streams in an HTTP/2 connection. Zero means to use golang's default.
+	HTTP2MaxStreamsPerConnection *int32 `json:"http2MaxStreamsPerConnection,omitempty" flag:"http2-max-streams-per-connection"`
+
 	// EtcdQuorumRead configures the etcd-quorum-read flag, which forces consistent reads from etcd
 	EtcdQuorumRead *bool `json:"etcdQuorumRead,omitempty" flag:"etcd-quorum-read"`
 
@@ -367,6 +428,31 @@ type KubeAPIServerConfig struct {
 
 	// Memory limit for apiserver in MB (used to configure sizes of caches, etc.)
 	TargetRamMb int32 `json:"targetRamMb,omitempty" flag:"target-ram-mb" flag-empty:"0"`
+
+	// File containing PEM-encoded x509 RSA or ECDSA private or public keys, used to verify ServiceAccount tokens.
+	// The specified file can contain multiple keys, and the flag can be specified multiple times with different files.
+	// If unspecified, --tls-private-key-file is used.
+	ServiceAccountKeyFile []string `json:"serviceAccountKeyFile,omitempty" flag:"service-account-key-file,repeat"`
+
+	// Path to the file that contains the current private key of the service account token issuer.
+	// The issuer will sign issued ID tokens with this private key. (Requires the 'TokenRequest' feature gate.)
+	ServiceAccountSigningKeyFile *string `json:"serviceAccountSigningKeyFile,omitempty" flag:"service-account-signing-key-file"`
+
+	// Identifier of the service account token issuer. The issuer will assert this identifier
+	// in "iss" claim of issued tokens. This value is a string or URI.
+	ServiceAccountIssuer *string `json:"serviceAccountIssuer,omitempty" flag:"service-account-issuer"`
+
+	// Identifiers of the API. The service account token authenticator will validate that
+	// tokens used against the API are bound to at least one of these audiences. If the
+	// --service-account-issuer flag is configured and this flag is not, this field
+	// defaults to a single element list containing the issuer URL.
+	APIAudiences []string `json:"apiAudiences,omitempty" flag:"api-audiences"`
+
+	// CPURequest, cpu request compute resource for api server. Defaults to "150m"
+	CPURequest string `json:"cpuRequest,omitempty"`
+
+	// Amount of time to retain Kubernetes events
+	EventTTL *metav1.Duration `json:"eventTTL,omitempty" flag:"event-ttl"`
 }
 
 // KubeControllerManagerConfig is the configuration for the controller
@@ -423,6 +509,10 @@ type KubeControllerManagerConfig struct {
 	// how long the autoscaler has to wait before another downscale
 	// operation can be performed after the current one has completed.
 	HorizontalPodAutoscalerDownscaleDelay *metav1.Duration `json:"horizontalPodAutoscalerDownscaleDelay,omitempty" flag:"horizontal-pod-autoscaler-downscale-delay"`
+	// HorizontalPodAutoscalerDownscaleStabilization is the period for which
+	// autoscaler will look backwards and not scale down below any
+	// recommendation it made during that period.
+	HorizontalPodAutoscalerDownscaleStabilization *metav1.Duration `json:"horizontalPodAutoscalerDownscaleStabilization,omitempty" flag:"horizontal-pod-autoscaler-downscale-stabilization"`
 	// HorizontalPodAutoscalerUpscaleDelay is a duration that specifies how
 	// long the autoscaler has to wait before another upscale operation can
 	// be performed after the current one has completed.
@@ -430,12 +520,26 @@ type KubeControllerManagerConfig struct {
 	// HorizontalPodAutoscalerTolerance is the minimum change (from 1.0) in the
 	// desired-to-actual metrics ratio for the horizontal pod autoscaler to
 	// consider scaling.
-	HorizontalPodAutoscalerTolerance *float64 `json:"horizontalPodAutoscalerTolerance,omitempty" flag:"horizontal-pod-autoscaler-tolerance"`
+	HorizontalPodAutoscalerTolerance *resource.Quantity `json:"horizontalPodAutoscalerTolerance,omitempty" flag:"horizontal-pod-autoscaler-tolerance"`
 	// HorizontalPodAutoscalerUseRestClients determines if the new-style clients
 	// should be used if support for custom metrics is enabled.
 	HorizontalPodAutoscalerUseRestClients *bool `json:"horizontalPodAutoscalerUseRestClients,omitempty" flag:"horizontal-pod-autoscaler-use-rest-clients"`
+	// ExperimentalClusterSigningDuration is the duration that determines
+	// the length of duration that the signed certificates will be given. (default 8760h0m0s)
+	ExperimentalClusterSigningDuration *metav1.Duration `json:"experimentalClusterSigningDuration,omitempty" flag:"experimental-cluster-signing-duration"`
 	// FeatureGates is set of key=value pairs that describe feature gates for alpha/experimental features.
 	FeatureGates map[string]string `json:"featureGates,omitempty" flag:"feature-gates"`
+	// TLSCipherSuites indicates the allowed TLS cipher suite
+	TLSCipherSuites []string `json:"tlsCipherSuites,omitempty" flag:"tls-cipher-suites"`
+	// TLSMinVersion indicates the minimum TLS version allowed
+	TLSMinVersion string `json:"tlsMinVersion,omitempty" flag:"tls-min-version"`
+	// MinResyncPeriod indicates the resync period in reflectors.
+	// The resync period will be random between MinResyncPeriod and 2*MinResyncPeriod. (default 12h0m0s)
+	MinResyncPeriod string `json:"minResyncPeriod,omitempty" flag:"min-resync-period"`
+	// KubeAPIQPS QPS to use while talking with kubernetes apiserver. (default 20)
+	KubeAPIQPS *resource.Quantity `json:"kubeAPIQPS,omitempty" flag:"kube-api-qps"`
+	// KubeAPIBurst Burst to use while talking with kubernetes apiserver. (default 30)
+	KubeAPIBurst *int32 `json:"kubeAPIBurst,omitempty" flag:"kube-api-burst"`
 }
 
 // CloudControllerManagerConfig is the configuration of the cloud controller
@@ -479,6 +583,11 @@ type KubeSchedulerConfig struct {
 	UsePolicyConfigMap *bool `json:"usePolicyConfigMap,omitempty"`
 	// FeatureGates is set of key=value pairs that describe feature gates for alpha/experimental features.
 	FeatureGates map[string]string `json:"featureGates,omitempty" flag:"feature-gates"`
+	// MaxPersistentVolumes changes the maximum number of persistent volumes the scheduler will scheduler onto the same
+	// node. Only takes into affect if value is positive. This corresponds to the KUBE_MAX_PD_VOLS environment variable,
+	// which has been supported as far back as Kubernetes 1.7. The default depends on the version and the cloud provider
+	// as outlined: https://kubernetes.io/docs/concepts/storage/storage-limits/
+	MaxPersistentVolumes *int32 `json:"maxPersistentVolumes,omitempty"`
 }
 
 // LeaderElectionConfiguration defines the configuration of leader election
@@ -488,6 +597,47 @@ type LeaderElectionConfiguration struct {
 	// before executing the main loop. Enable this when running replicated
 	// components for high availability.
 	LeaderElect *bool `json:"leaderElect,omitempty" flag:"leader-elect"`
+}
+
+// OpenstackLoadbalancerConfig defines the config for a neutron loadbalancer
+type OpenstackLoadbalancerConfig struct {
+	Method            *string `json:"method,omitempty"`
+	Provider          *string `json:"provider,omitempty"`
+	UseOctavia        *bool   `json:"useOctavia,omitempty"`
+	FloatingNetwork   *string `json:"floatingNetwork,omitempty"`
+	FloatingNetworkID *string `json:"floatingNetworkID,omitempty"`
+	FloatingSubnet    *string `json:"floatingSubnet,omitempty"`
+	SubnetID          *string `json:"subnetID,omitempty"`
+	ManageSecGroups   *bool   `json:"manageSecurityGroups,omitempty"`
+}
+
+type OpenstackBlockStorageConfig struct {
+	Version    *string `json:"bs-version,omitempty"`
+	IgnoreAZ   *bool   `json:"ignore-volume-az,omitempty"`
+	OverrideAZ *string `json:"override-volume-az,omitempty"`
+}
+
+// OpenstackMonitor defines the config for a health monitor
+type OpenstackMonitor struct {
+	Delay      *string `json:"delay,omitempty"`
+	Timeout    *string `json:"timeout,omitempty"`
+	MaxRetries *int    `json:"maxRetries,omitempty"`
+}
+
+// OpenstackRouter defines the config for a router
+type OpenstackRouter struct {
+	ExternalNetwork *string `json:"externalNetwork,omitempty"`
+	DNSServers      *string `json:"dnsServers,omitempty"`
+	ExternalSubnet  *string `json:"externalSubnet,omitempty"`
+}
+
+// OpenstackConfiguration defines cloud config elements for the openstack cloud provider
+type OpenstackConfiguration struct {
+	Loadbalancer       *OpenstackLoadbalancerConfig `json:"loadbalancer,omitempty"`
+	Monitor            *OpenstackMonitor            `json:"monitor,omitempty"`
+	Router             *OpenstackRouter             `json:"router,omitempty"`
+	BlockStorage       *OpenstackBlockStorageConfig `json:"blockStorage,omitempty"`
+	InsecureSkipVerify *bool                        `json:"insecureSkipVerify,omitempty"`
 }
 
 // CloudConfiguration defines the cloud provider configuration
@@ -510,6 +660,8 @@ type CloudConfiguration struct {
 	// Spotinst cloud-config specs
 	SpotinstProduct     *string `json:"spotinstProduct,omitempty"`
 	SpotinstOrientation *string `json:"spotinstOrientation,omitempty"`
+	// Openstack cloud-config options
+	Openstack *OpenstackConfiguration `json:"openstack,omitempty"`
 }
 
 // HasAdmissionController checks if a specific admission controller is enabled

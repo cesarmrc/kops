@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -35,7 +35,6 @@ import (
 	"time"
 
 	"k8s.io/kops/cmd/kops/util"
-	"k8s.io/kops/pkg/diff"
 	"k8s.io/kops/pkg/featureflag"
 	"k8s.io/kops/pkg/jsonutils"
 	"k8s.io/kops/pkg/testutils"
@@ -52,20 +51,20 @@ const updateClusterTestBase = "../../tests/integration/update_cluster/"
 
 // TestMinimal runs the test on a minimum configuration, similar to kops create cluster minimal.example.com --zones us-west-1a
 func TestMinimal(t *testing.T) {
-	runTestAWS(t, "minimal.example.com", "minimal", "v1alpha0", false, 1, true, nil)
-	runTestAWS(t, "minimal.example.com", "minimal", "v1alpha1", false, 1, true, nil)
-	runTestAWS(t, "minimal.example.com", "minimal", "v1alpha2", false, 1, true, nil)
+	runTestAWS(t, "minimal.example.com", "minimal", "v1alpha0", false, 1, true, false, nil)
+	runTestAWS(t, "minimal.example.com", "minimal", "v1alpha1", false, 1, true, false, nil)
+	runTestAWS(t, "minimal.example.com", "minimal", "v1alpha2", false, 1, true, false, nil)
 }
 
 // TestRestrictAccess runs the test on a simple SG configuration, similar to kops create cluster minimal.example.com --ssh-access=$(IPS) --admin-access=$(IPS) --master-count=3
 func TestRestrictAccess(t *testing.T) {
-	runTestAWS(t, "restrictaccess.example.com", "restrict_access", "v1alpha2", false, 1, true, nil)
+	runTestAWS(t, "restrictaccess.example.com", "restrict_access", "v1alpha2", false, 1, true, false, nil)
 }
 
 // TestHA runs the test on a simple HA configuration, similar to kops create cluster minimal.example.com --zones us-west-1a,us-west-1b,us-west-1c --master-count=3
 func TestHA(t *testing.T) {
-	runTestAWS(t, "ha.example.com", "ha", "v1alpha1", false, 3, true, nil)
-	runTestAWS(t, "ha.example.com", "ha", "v1alpha2", false, 3, true, nil)
+	runTestAWS(t, "ha.example.com", "ha", "v1alpha1", false, 3, true, false, nil)
+	runTestAWS(t, "ha.example.com", "ha", "v1alpha2", false, 3, true, false, nil)
 }
 
 // TestHighAvailabilityGCE runs the test on a simple HA GCE configuration, similar to kops create cluster ha-gce.example.com
@@ -76,7 +75,15 @@ func TestHighAvailabilityGCE(t *testing.T) {
 
 // TestComplex runs the test on a more complex configuration, intended to hit more of the edge cases
 func TestComplex(t *testing.T) {
-	runTestAWS(t, "complex.example.com", "complex", "v1alpha2", false, 1, true, nil)
+	runTestAWS(t, "complex.example.com", "complex", "v1alpha2", false, 1, true, false, nil)
+	runTestAWS(t, "complex.example.com", "complex", "legacy-v1alpha2", false, 1, true, false, nil)
+
+	runTestCloudformation(t, "complex.example.com", "complex", "v1alpha2", false, nil)
+}
+
+// TestCrossZone tests that the cross zone setting on the API ELB is set properly
+func TestCrossZone(t *testing.T) {
+	runTestAWS(t, "crosszone.example.com", "api_elb_cross_zone", "v1alpha2", false, 1, true, false, nil)
 }
 
 // TestMinimalCloudformation runs the test on a minimum configuration, similar to kops create cluster minimal.example.com --zones us-west-1a
@@ -94,7 +101,7 @@ func TestExistingIAMCloudformation(t *testing.T) {
 func TestExistingSG(t *testing.T) {
 	lifecycleOverrides := []string{"SecurityGroup=ExistsAndWarnIfChanges", "SecurityGroupRule=ExistsAndWarnIfChanges"}
 	lifecycleOverrides = nil
-	runTestAWS(t, "existingsg.example.com", "existing_sg", "v1alpha2", false, 3, true, lifecycleOverrides)
+	runTestAWS(t, "existingsg.example.com", "existing_sg", "v1alpha2", false, 3, true, false, lifecycleOverrides)
 }
 
 // TestAdditionalUserData runs the test on passing additional user-data to an instance at bootstrap.
@@ -104,76 +111,82 @@ func TestAdditionalUserData(t *testing.T) {
 
 // TestBastionAdditionalUserData runs the test on passing additional user-data to a bastion instance group
 func TestBastionAdditionalUserData(t *testing.T) {
-	runTestAWS(t, "bastionuserdata.example.com", "bastionadditional_user-data", "v1alpha2", true, 1, true, nil)
+	runTestAWS(t, "bastionuserdata.example.com", "bastionadditional_user-data", "v1alpha2", true, 1, true, false, nil)
 }
 
 // TestMinimal_141 runs the test on a configuration from 1.4.1 release
 func TestMinimal_141(t *testing.T) {
-	runTestAWS(t, "minimal-141.example.com", "minimal-141", "v1alpha0", false, 1, true, nil)
+	runTestAWS(t, "minimal-141.example.com", "minimal-141", "v1alpha0", false, 1, true, false, nil)
 }
 
 // TestPrivateWeave runs the test on a configuration with private topology, weave networking
 func TestPrivateWeave(t *testing.T) {
-	runTestAWS(t, "privateweave.example.com", "privateweave", "v1alpha1", true, 1, true, nil)
-	runTestAWS(t, "privateweave.example.com", "privateweave", "v1alpha2", true, 1, true, nil)
+	runTestAWS(t, "privateweave.example.com", "privateweave", "v1alpha1", true, 1, true, false, nil)
+	runTestAWS(t, "privateweave.example.com", "privateweave", "v1alpha2", true, 1, true, false, nil)
 }
 
 // TestPrivateFlannel runs the test on a configuration with private topology, flannel networking
 func TestPrivateFlannel(t *testing.T) {
-	runTestAWS(t, "privateflannel.example.com", "privateflannel", "v1alpha1", true, 1, true, nil)
-	runTestAWS(t, "privateflannel.example.com", "privateflannel", "v1alpha2", true, 1, true, nil)
+	runTestAWS(t, "privateflannel.example.com", "privateflannel", "v1alpha1", true, 1, true, false, nil)
+	runTestAWS(t, "privateflannel.example.com", "privateflannel", "v1alpha2", true, 1, true, false, nil)
 }
 
 // TestPrivateCalico runs the test on a configuration with private topology, calico networking
 func TestPrivateCalico(t *testing.T) {
-	runTestAWS(t, "privatecalico.example.com", "privatecalico", "v1alpha1", true, 1, true, nil)
-	runTestAWS(t, "privatecalico.example.com", "privatecalico", "v1alpha2", true, 1, true, nil)
+	runTestAWS(t, "privatecalico.example.com", "privatecalico", "v1alpha1", true, 1, true, false, nil)
+	runTestAWS(t, "privatecalico.example.com", "privatecalico", "v1alpha2", true, 1, true, false, nil)
 }
 
 // TestPrivateCanal runs the test on a configuration with private topology, canal networking
 func TestPrivateCanal(t *testing.T) {
-	runTestAWS(t, "privatecanal.example.com", "privatecanal", "v1alpha1", true, 1, true, nil)
-	runTestAWS(t, "privatecanal.example.com", "privatecanal", "v1alpha2", true, 1, true, nil)
+	runTestAWS(t, "privatecanal.example.com", "privatecanal", "v1alpha1", true, 1, true, false, nil)
+	runTestAWS(t, "privatecanal.example.com", "privatecanal", "v1alpha2", true, 1, true, false, nil)
 }
 
 // TestPrivateKopeio runs the test on a configuration with private topology, kopeio networking
 func TestPrivateKopeio(t *testing.T) {
-	runTestAWS(t, "privatekopeio.example.com", "privatekopeio", "v1alpha2", true, 1, true, nil)
+	runTestAWS(t, "privatekopeio.example.com", "privatekopeio", "v1alpha2", true, 1, true, false, nil)
+}
+
+// TestUnmanaged is a test where all the subnets opt-out of route management
+func TestUnmanaged(t *testing.T) {
+	runTestAWS(t, "unmanaged.example.com", "unmanaged", "v1alpha2", true, 1, true, false, nil)
 }
 
 // TestPrivateSharedSubnet runs the test on a configuration with private topology & shared subnets
 func TestPrivateSharedSubnet(t *testing.T) {
-	runTestAWS(t, "private-shared-subnet.example.com", "private-shared-subnet", "v1alpha2", true, 1, true, nil)
+	runTestAWS(t, "private-shared-subnet.example.com", "private-shared-subnet", "v1alpha2", true, 1, true, false, nil)
 }
 
 // TestPrivateDns1 runs the test on a configuration with private topology, private dns
 func TestPrivateDns1(t *testing.T) {
-	runTestAWS(t, "privatedns1.example.com", "privatedns1", "v1alpha2", true, 1, true, nil)
+	runTestAWS(t, "privatedns1.example.com", "privatedns1", "v1alpha2", true, 1, true, false, nil)
 }
 
 // TestPrivateDns2 runs the test on a configuration with private topology, private dns, extant vpc
 func TestPrivateDns2(t *testing.T) {
-	runTestAWS(t, "privatedns2.example.com", "privatedns2", "v1alpha2", true, 1, true, nil)
+	runTestAWS(t, "privatedns2.example.com", "privatedns2", "v1alpha2", true, 1, true, false, nil)
 }
 
 // TestSharedSubnet runs the test on a configuration with a shared subnet (and VPC)
 func TestSharedSubnet(t *testing.T) {
-	runTestAWS(t, "sharedsubnet.example.com", "shared_subnet", "v1alpha2", false, 1, true, nil)
+	runTestAWS(t, "sharedsubnet.example.com", "shared_subnet", "v1alpha2", false, 1, true, false, nil)
 }
 
 // TestSharedVPC runs the test on a configuration with a shared VPC
 func TestSharedVPC(t *testing.T) {
-	runTestAWS(t, "sharedvpc.example.com", "shared_vpc", "v1alpha2", false, 1, true, nil)
+	runTestAWS(t, "sharedvpc.example.com", "shared_vpc", "v1alpha2", false, 1, true, false, nil)
 }
 
 // TestExistingIAM runs the test on a configuration with existing IAM instance profiles
 func TestExistingIAM(t *testing.T) {
 	lifecycleOverrides := []string{"IAMRole=ExistsAndWarnIfChanges", "IAMRolePolicy=ExistsAndWarnIfChanges", "IAMInstanceProfileRole=ExistsAndWarnIfChanges"}
-	runTestAWS(t, "existing-iam.example.com", "existing_iam", "v1alpha2", false, 3, false, lifecycleOverrides)
+	runTestAWS(t, "existing-iam.example.com", "existing_iam", "v1alpha2", false, 3, false, false, lifecycleOverrides)
 }
 
 // TestAdditionalCIDR runs the test on a configuration with a shared VPC
 func TestAdditionalCIDR(t *testing.T) {
+	runTestAWS(t, "additionalcidr.example.com", "additional_cidr", "v1alpha3", false, 3, true, false, nil)
 	runTestCloudformation(t, "additionalcidr.example.com", "additional_cidr", "v1alpha2", false, nil)
 }
 
@@ -183,7 +196,7 @@ func TestPhaseNetwork(t *testing.T) {
 }
 
 func TestExternalLoadBalancer(t *testing.T) {
-	runTestAWS(t, "externallb.example.com", "externallb", "v1alpha2", false, 1, true, nil)
+	runTestAWS(t, "externallb.example.com", "externallb", "v1alpha2", false, 1, true, false, nil)
 	runTestCloudformation(t, "externallb.example.com", "externallb", "v1alpha2", false, nil)
 }
 
@@ -198,6 +211,18 @@ func TestPhaseCluster(t *testing.T) {
 	// TODO fix tf for phase, and allow override on validation
 	t.Skip("unable to test w/o allowing failed validation")
 	runTestPhase(t, "lifecyclephases.example.com", "lifecycle_phases", "v1alpha2", true, 1, cloudup.PhaseCluster)
+}
+
+// TestMixedInstancesASG tests ASGs using a mixed instance policy
+func TestMixedInstancesASG(t *testing.T) {
+	runTestAWS(t, "mixedinstances.example.com", "mixed_instances", "v1alpha2", false, 3, true, true, nil)
+	runTestCloudformation(t, "mixedinstances.example.com", "mixed_instances", "v1alpha2", false, nil)
+}
+
+// TestMixedInstancesSpotASG tests ASGs using a mixed instance policy and spot instances
+func TestMixedInstancesSpotASG(t *testing.T) {
+	runTestAWS(t, "mixedinstances.example.com", "mixed_instances_spot", "v1alpha2", false, 3, true, true, nil)
+	runTestCloudformation(t, "mixedinstances.example.com", "mixed_instances_spot", "v1alpha2", false, nil)
 }
 
 func runTest(t *testing.T, h *testutils.IntegrationTestHarness, clusterName string, srcDir string, version string, private bool, zones int, expectedDataFilenames []string, tfFileName string, phase *cloudup.Phase, lifecycleOverrides []string) {
@@ -288,27 +313,8 @@ func runTest(t *testing.T, h *testutils.IntegrationTestHarness, clusterName stri
 		if err != nil {
 			t.Fatalf("unexpected error reading actual terraform output: %v", err)
 		}
-		expectedTF, err := ioutil.ReadFile(path.Join(srcDir, testDataTFPath))
-		if err != nil {
-			t.Fatalf("unexpected error reading expected terraform output: %v", err)
-		}
-		expectedTF = bytes.Replace(expectedTF, []byte("\r\n"), []byte("\n"), -1)
 
-		if !bytes.Equal(actualTF, expectedTF) {
-			diffString := diff.FormatDiff(string(expectedTF), string(actualTF))
-			t.Logf("diff:\n%s\n", diffString)
-
-			if os.Getenv("HACK_UPDATE_EXPECTED_IN_PLACE") != "" {
-				fp := path.Join(srcDir, testDataTFPath)
-				t.Logf("HACK_UPDATE_EXPECTED_IN_PLACE: writing expected output %s", fp)
-				if err := ioutil.WriteFile(fp, actualTF, 0644); err != nil {
-					t.Errorf("error writing terraform output: %v", err)
-				}
-				t.Errorf("terraform output differed from expected")
-				return // Avoid Fatalf as we want to keep going and update all files
-			}
-			t.Fatalf("terraform output differed from expected")
-		}
+		testutils.AssertMatchesFile(t, string(actualTF), path.Join(srcDir, testDataTFPath))
 	}
 
 	// Compare data files if they are provided
@@ -326,6 +332,12 @@ func runTest(t *testing.T, h *testutils.IntegrationTestHarness, clusterName stri
 
 		sort.Strings(expectedDataFilenames)
 		if !reflect.DeepEqual(actualDataFilenames, expectedDataFilenames) {
+			for i := 0; i < len(actualDataFilenames) && i < len(expectedDataFilenames); i++ {
+				if actualDataFilenames[i] != expectedDataFilenames[i] {
+					t.Errorf("diff @%d: %q vs %q", i, actualDataFilenames[i], expectedDataFilenames[i])
+					break
+				}
+			}
 			t.Fatalf("unexpected data files.  actual=%q, expected=%q", actualDataFilenames, expectedDataFilenames)
 		}
 
@@ -367,7 +379,7 @@ func runTest(t *testing.T, h *testutils.IntegrationTestHarness, clusterName stri
 	}
 }
 
-func runTestAWS(t *testing.T, clusterName string, srcDir string, version string, private bool, zones int, expectPolicies bool, lifecycleOverrides []string) {
+func runTestAWS(t *testing.T, clusterName string, srcDir string, version string, private bool, zones int, expectPolicies bool, launchTemplate bool, lifecycleOverrides []string) {
 	h := testutils.NewIntegrationTestHarness(t)
 	defer h.Close()
 
@@ -376,7 +388,11 @@ func runTestAWS(t *testing.T, clusterName string, srcDir string, version string,
 
 	expectedFilenames := []string{
 		"aws_key_pair_kubernetes." + clusterName + "-c4a6ed9aa889b9e2c39cd663eb9c7157_public_key",
-		"aws_launch_configuration_nodes." + clusterName + "_user_data",
+	}
+	if launchTemplate {
+		expectedFilenames = append(expectedFilenames, "aws_launch_template_nodes."+clusterName+"_user_data")
+	} else {
+		expectedFilenames = append(expectedFilenames, "aws_launch_configuration_nodes."+clusterName+"_user_data")
 	}
 
 	for i := 0; i < zones; i++ {
@@ -469,6 +485,7 @@ func runTestGCE(t *testing.T, clusterName string, srcDir string, version string,
 		"google_compute_instance_template_nodes-" + gce.SafeClusterName(clusterName) + "_metadata_cluster-name",
 		"google_compute_instance_template_nodes-" + gce.SafeClusterName(clusterName) + "_metadata_startup-script",
 		"google_compute_instance_template_nodes-" + gce.SafeClusterName(clusterName) + "_metadata_ssh-keys",
+		"google_compute_instance_template_nodes-" + gce.SafeClusterName(clusterName) + "_metadata_kops-k8s-io-instance-group-name",
 	}
 
 	for i := 0; i < zones; i++ {
@@ -478,6 +495,7 @@ func runTestGCE(t *testing.T, clusterName string, srcDir string, version string,
 		expectedFilenames = append(expectedFilenames, prefix+"cluster-name")
 		expectedFilenames = append(expectedFilenames, prefix+"startup-script")
 		expectedFilenames = append(expectedFilenames, prefix+"ssh-keys")
+		expectedFilenames = append(expectedFilenames, prefix+"kops-k8s-io-instance-group-name")
 	}
 
 	runTest(t, h, clusterName, srcDir, version, private, zones, expectedFilenames, "", nil, nil)
@@ -564,10 +582,6 @@ func runTestCloudformation(t *testing.T, clusterName string, srcDir string, vers
 		if err != nil {
 			t.Fatalf("unexpected error reading actual cloudformation output: %v", err)
 		}
-		expectedCF, err := ioutil.ReadFile(path.Join(srcDir, expectedCfPath))
-		if err != nil {
-			t.Fatalf("unexpected error reading expected cloudformation output: %v", err)
-		}
 
 		// Expand out the UserData base64 blob, as otherwise testing is painful
 		extracted := make(map[string]string)
@@ -602,84 +616,29 @@ func runTestCloudformation(t *testing.T, clusterName string, srcDir string, vers
 		}
 		actualCF = buf.Bytes()
 
-		expectedCFTrimmed := strings.Replace(strings.TrimSpace(string(expectedCF)), "\r\n", "\n", -1)
-		actualCFTrimmed := strings.TrimSpace(string(actualCF))
-		if actualCFTrimmed != expectedCFTrimmed {
-			diffString := diff.FormatDiff(expectedCFTrimmed, actualCFTrimmed)
-			t.Logf("diff:\n%s\n", diffString)
+		testutils.AssertMatchesFile(t, string(actualCF), path.Join(srcDir, expectedCfPath))
 
-			if os.Getenv("KEEP_TEMP_DIR") == "" {
-				t.Logf("(hint: setting KEEP_TEMP_DIR will preserve test output")
-			} else {
-				t.Logf("actual terraform output in %s", actualPath)
+		// test extracted values
+		{
+			actual := make(map[string]string)
+
+			for k, v := range extracted {
+				// Strip carriage return as expectedValue is stored in a yaml string literal
+				// and yaml block quoting doesn't seem to support \r in a string
+				v = strings.Replace(v, "\r", "", -1)
+
+				actual[k] = v
 			}
 
-			if os.Getenv("HACK_UPDATE_EXPECTED_IN_PLACE") != "" {
-				fp := path.Join(srcDir, expectedCfPath)
-				t.Logf("HACK_UPDATE_EXPECTED_IN_PLACE: writing expected output %s", fp)
-				if err := ioutil.WriteFile(fp, actualCF, 0644); err != nil {
-					t.Errorf("error writing expected output file %q: %v", fp, err)
-				}
-			}
-
-			t.Fatalf("cloudformation output differed from expected. Test file: %s", path.Join(srcDir, expectedCfPath))
-		}
-
-		fp := path.Join(srcDir, expectedCfPath+".extracted.yaml")
-		expectedExtracted, err := ioutil.ReadFile(fp)
-		if err != nil {
-			t.Fatalf("unexpected error reading expected extracted cloudformation output: %v", err)
-		}
-
-		expected := make(map[string]string)
-		err = yaml.Unmarshal(expectedExtracted, &expected)
-		if err != nil {
-			t.Fatalf("unexpected error unmarshal expected extracted cloudformation output: %v", err)
-		}
-
-		if len(extracted) != len(expected) {
-			t.Fatalf("error differed number of cloudformation in expected and extracted: %v", err)
-		}
-
-		actual := make(map[string]string)
-
-		for key, expectedValue := range expected {
-			extractedValue, ok := extracted[key]
-			if !ok {
-				t.Fatalf("unexpected error expected cloudformation not found for k: %v", key)
-			}
-
-			actual[key] = extractedValue
-
-			// Strip carriage return as expectedValue is stored in a yaml string literal
-			// and yaml block quoting doesn't seem to support \r in a string
-			extractedValueTrimmed := strings.Replace(extractedValue, "\r", "", -1)
-
-			if expectedValue != extractedValueTrimmed {
-				diffString := diff.FormatDiff(expectedValue, extractedValueTrimmed)
-				t.Logf("diff for key %s:\n%s\n\n\n\n\n\n", key, diffString)
-				t.Errorf("cloudformation output differed from expected. Test file: %s", path.Join(srcDir, expectedCfPath+".extracted.yaml"))
-			}
-		}
-
-		if os.Getenv("HACK_UPDATE_EXPECTED_IN_PLACE") != "" {
-			t.Logf("HACK_UPDATE_EXPECTED_IN_PLACE: writing expected output %s", fp)
-
-			// We replace the \r characters so that the yaml output (should) be block-quoted
-			// Literal quoting is sadly unreadable...
-			for k, v := range actual {
-				actual[k] = strings.Replace(v, "\r", "", -1)
-			}
-
-			b, err := yaml.Marshal(actual)
+			actualExtracted, err := yaml.Marshal(actual)
 			if err != nil {
-				t.Errorf("error serializing cloudformation output: %v", err)
+				t.Fatalf("error serializing yaml: %v", err)
 			}
-			if err := ioutil.WriteFile(fp, b, 0644); err != nil {
-				t.Errorf("error writing cloudformation output: %v", err)
-			}
+
+			testutils.AssertMatchesFile(t, string(actualExtracted), path.Join(srcDir, expectedCfPath+".extracted.yaml"))
 		}
 
+		testutils.AssertMatchesFile(t, string(actualCF), path.Join(srcDir, expectedCfPath))
 	}
 }
 

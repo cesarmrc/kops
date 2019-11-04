@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@ limitations under the License.
 package fi
 
 import (
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/kops/dnsprovider/pkg/dnsprovider"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/cloudinstances"
@@ -89,6 +89,10 @@ var zonesToCloud = map[string]kops.CloudProviderID{
 	"ca-central-1a": kops.CloudProviderAWS,
 	"ca-central-1b": kops.CloudProviderAWS,
 
+	"eu-north-1a": kops.CloudProviderAWS,
+	"eu-north-1b": kops.CloudProviderAWS,
+	"eu-north-1c": kops.CloudProviderAWS,
+
 	"eu-west-1a": kops.CloudProviderAWS,
 	"eu-west-1b": kops.CloudProviderAWS,
 	"eu-west-1c": kops.CloudProviderAWS,
@@ -139,6 +143,12 @@ var zonesToCloud = map[string]kops.CloudProviderID{
 	"ap-northeast-2d": kops.CloudProviderAWS,
 	"ap-northeast-2e": kops.CloudProviderAWS,
 
+	"ap-east-1a": kops.CloudProviderAWS,
+	"ap-east-1b": kops.CloudProviderAWS,
+	"ap-east-1c": kops.CloudProviderAWS,
+	"ap-east-1d": kops.CloudProviderAWS,
+	"ap-east-1e": kops.CloudProviderAWS,
+
 	"sa-east-1a": kops.CloudProviderAWS,
 	"sa-east-1b": kops.CloudProviderAWS,
 	"sa-east-1c": kops.CloudProviderAWS,
@@ -152,8 +162,13 @@ var zonesToCloud = map[string]kops.CloudProviderID{
 	"cn-northwest-1b": kops.CloudProviderAWS,
 	"cn-northwest-1c": kops.CloudProviderAWS,
 
+	"us-gov-east-1a": kops.CloudProviderAWS,
+	"us-gov-east-1b": kops.CloudProviderAWS,
+	"us-gov-east-1c": kops.CloudProviderAWS,
+
 	"us-gov-west-1a": kops.CloudProviderAWS,
 	"us-gov-west-1b": kops.CloudProviderAWS,
+	"us-gov-west-1c": kops.CloudProviderAWS,
 
 	// GCE
 	"asia-east1-a": kops.CloudProviderGCE,
@@ -176,6 +191,10 @@ var zonesToCloud = map[string]kops.CloudProviderID{
 	"australia-southeast1-a": kops.CloudProviderGCE,
 	"australia-southeast1-b": kops.CloudProviderGCE,
 	"australia-southeast1-c": kops.CloudProviderGCE,
+
+	"europe-north1-a": kops.CloudProviderGCE,
+	"europe-north1-b": kops.CloudProviderGCE,
+	"europe-north1-c": kops.CloudProviderGCE,
 
 	"europe-west1-a": kops.CloudProviderGCE,
 	"europe-west1-b": kops.CloudProviderGCE,

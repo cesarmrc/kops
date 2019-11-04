@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ func YAMLToJSON(yamlBytes []byte) ([]byte, error) {
 	return yaml.YAMLToJSON(yamlBytes)
 }
 
-// YamlUnmarshal unmarshalls the yaml content to an interface
+// YamlUnmarshal unmarshals the yaml content to an interface
 func YamlUnmarshal(yamlBytes []byte, dest interface{}) error {
 	return yaml.Unmarshal(yamlBytes, dest)
 }

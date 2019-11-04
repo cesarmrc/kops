@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 
 	"k8s.io/kops/pkg/values"
 )
@@ -94,28 +94,28 @@ func ValueAsString(value reflect.Value) string {
 			for _, p := range printers {
 				s, ok := p(intf)
 				if ok {
-					fmt.Fprintf(b, s)
+					fmt.Fprintf(b, "%s", s)
 					done = true
 					break
 				}
 			}
 
 			if !done {
-				glog.V(4).Infof("Unhandled kind in asString for %q: %T", path, v.Interface())
+				klog.V(4).Infof("Unhandled kind in asString for %q: %T", path, v.Interface())
 				fmt.Fprint(b, values.DebugAsJsonString(intf))
 			}
 
 			return SkipReflection
 
 		default:
-			glog.Infof("Unhandled kind in asString for %q: %T", path, v.Interface())
+			klog.Infof("Unhandled kind in asString for %q: %T", path, v.Interface())
 			return fmt.Errorf("Unhandled kind for %q: %v", path, v.Kind())
 		}
 	}
 
 	err := ReflectRecursive(value, walker)
 	if err != nil {
-		glog.Fatalf("unexpected error during reflective walk: %v", err)
+		klog.Fatalf("unexpected error during reflective walk: %v", err)
 	}
 	return b.String()
 }

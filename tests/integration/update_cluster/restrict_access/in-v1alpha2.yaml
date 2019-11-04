@@ -1,4 +1,4 @@
-apiVersion: kops/v1alpha2
+apiVersion: kops.k8s.io/v1alpha2
 kind: Cluster
 metadata:
   creationTimestamp: "2016-12-10T22:42:27Z"
@@ -19,7 +19,7 @@ spec:
     - instanceGroup: master-us-test-1a
       name: us-test-1a
     name: events
-  kubernetesVersion: v1.8.0
+  kubernetesVersion: v1.14.0
   masterInternalName: api.internal.restrictaccess.example.com
   masterPublicName: api.restrictaccess.example.com
   networkCIDR: 172.20.0.0/16
@@ -40,7 +40,7 @@ spec:
 
 ---
 
-apiVersion: kops/v1alpha2
+apiVersion: kops.k8s.io/v1alpha2
 kind: InstanceGroup
 metadata:
   creationTimestamp: "2016-12-10T22:42:28Z"
@@ -59,7 +59,7 @@ spec:
 
 ---
 
-apiVersion: kops/v1alpha2
+apiVersion: kops.k8s.io/v1alpha2
 kind: InstanceGroup
 metadata:
   creationTimestamp: "2016-12-10T22:42:28Z"

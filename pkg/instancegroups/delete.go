@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package instancegroups
 import (
 	"fmt"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 	api "k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/client/simple"
 	"k8s.io/kops/upup/pkg/fi"
@@ -48,7 +48,7 @@ func (d *DeleteInstanceGroup) DeleteInstanceGroup(group *api.InstanceGroup) erro
 
 	// TODO should we drain nodes and validate the cluster?
 	for _, g := range groups {
-		glog.Infof("Deleting %q", group.ObjectMeta.Name)
+		klog.Infof("Deleting %q", group.ObjectMeta.Name)
 
 		err = d.Cloud.DeleteGroup(g)
 		if err != nil {

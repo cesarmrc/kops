@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -119,7 +119,7 @@ func toDER(pubkey ssh.PublicKey) ([]byte, error) {
 
 	der, err := x509.MarshalPKIXPublicKey(cryptoKey)
 	if err != nil {
-		return nil, fmt.Errorf("error marshalling SSH public key: %v", err)
+		return nil, fmt.Errorf("error marshaling SSH public key: %v", err)
 	}
 	return der, nil
 }

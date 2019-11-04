@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,8 +24,7 @@ import (
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/upup/pkg/fi"
 
-	"github.com/golang/glog"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -65,33 +64,6 @@ func buildDockerEnvironmentVars(env map[string]string) []string {
 	return list
 }
 
-func getProxyEnvVars(proxies *kops.EgressProxySpec) []v1.EnvVar {
-	if proxies == nil {
-		glog.V(8).Info("proxies is == nil, returning empty list")
-		return []v1.EnvVar{}
-	}
-
-	if proxies.HTTPProxy.Host == "" {
-		glog.Warning("EgressProxy set but no proxy host provided")
-	}
-
-	var httpProxyURL string
-	if proxies.HTTPProxy.Port == 0 {
-		httpProxyURL = "http://" + proxies.HTTPProxy.Host
-	} else {
-		httpProxyURL = "http://" + proxies.HTTPProxy.Host + ":" + strconv.Itoa(proxies.HTTPProxy.Port)
-	}
-
-	noProxy := proxies.ProxyExcludes
-
-	return []v1.EnvVar{
-		{Name: "http_proxy", Value: httpProxyURL},
-		{Name: "https_proxy", Value: httpProxyURL},
-		{Name: "NO_PROXY", Value: noProxy},
-		{Name: "no_proxy", Value: noProxy},
-	}
-}
-
 // sortedStrings is just a one liner helper methods
 func sortedStrings(list []string) []string {
 	sort.Strings(list)
@@ -117,6 +89,23 @@ func addHostPathMapping(pod *v1.Pod, container *v1.Container, name, path string)
 	})
 
 	return &container.VolumeMounts[len(container.VolumeMounts)-1]
+}
+
+// addHostPathVolume is shorthand for mapping a host path into a container
+func addHostPathVolume(pod *v1.Pod, container *v1.Container, hostPath v1.HostPathVolumeSource, volumeMount v1.VolumeMount) {
+	vol := v1.Volume{
+		Name: volumeMount.Name,
+		VolumeSource: v1.VolumeSource{
+			HostPath: &hostPath,
+		},
+	}
+
+	if volumeMount.MountPath == "" {
+		volumeMount.MountPath = hostPath.Path
+	}
+
+	pod.Spec.Volumes = append(pod.Spec.Volumes, vol)
+	container.VolumeMounts = append(container.VolumeMounts, volumeMount)
 }
 
 // convEtcdSettingsToMs converts etcd settings to a string rep of int milliseconds

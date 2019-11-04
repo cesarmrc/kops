@@ -130,6 +130,12 @@ resource "aws_autoscaling_group" "master-us-test-1a-masters-existingsg-example-c
     propagate_at_launch = true
   }
 
+  tag = {
+    key                 = "kops.k8s.io/instancegroup"
+    value               = "master-us-test-1a"
+    propagate_at_launch = true
+  }
+
   metrics_granularity = "1Minute"
   enabled_metrics     = ["GroupDesiredCapacity", "GroupInServiceInstances", "GroupMaxSize", "GroupMinSize", "GroupPendingInstances", "GroupStandbyInstances", "GroupTerminatingInstances", "GroupTotalInstances"]
 }
@@ -156,6 +162,12 @@ resource "aws_autoscaling_group" "master-us-test-1b-masters-existingsg-example-c
   tag = {
     key                 = "k8s.io/role/master"
     value               = "1"
+    propagate_at_launch = true
+  }
+
+  tag = {
+    key                 = "kops.k8s.io/instancegroup"
+    value               = "master-us-test-1b"
     propagate_at_launch = true
   }
 
@@ -188,6 +200,12 @@ resource "aws_autoscaling_group" "master-us-test-1c-masters-existingsg-example-c
     propagate_at_launch = true
   }
 
+  tag = {
+    key                 = "kops.k8s.io/instancegroup"
+    value               = "master-us-test-1c"
+    propagate_at_launch = true
+  }
+
   metrics_granularity = "1Minute"
   enabled_metrics     = ["GroupDesiredCapacity", "GroupInServiceInstances", "GroupMaxSize", "GroupMinSize", "GroupPendingInstances", "GroupStandbyInstances", "GroupTerminatingInstances", "GroupTotalInstances"]
 }
@@ -214,6 +232,12 @@ resource "aws_autoscaling_group" "nodes-existingsg-example-com" {
   tag = {
     key                 = "k8s.io/role/node"
     value               = "1"
+    propagate_at_launch = true
+  }
+
+  tag = {
+    key                 = "kops.k8s.io/instancegroup"
+    value               = "nodes"
     propagate_at_launch = true
   }
 
@@ -332,11 +356,13 @@ resource "aws_elb" "api-existingsg-example-com" {
     timeout             = 5
   }
 
-  idle_timeout = 300
+  cross_zone_load_balancing = false
+  idle_timeout              = 300
 
   tags = {
-    KubernetesCluster = "existingsg.example.com"
-    Name              = "api.existingsg.example.com"
+    KubernetesCluster                              = "existingsg.example.com"
+    Name                                           = "api.existingsg.example.com"
+    "kubernetes.io/cluster/existingsg.example.com" = "owned"
   }
 }
 
@@ -711,6 +737,15 @@ resource "aws_security_group_rule" "https-elb-to-master-sg-master-1b" {
   from_port                = 443
   to_port                  = 443
   protocol                 = "tcp"
+}
+
+resource "aws_security_group_rule" "icmp-pmtu-api-elb-0-0-0-0--0" {
+  type              = "ingress"
+  security_group_id = "sg-elb"
+  from_port         = 3
+  to_port           = 4
+  protocol          = "icmp"
+  cidr_blocks       = ["0.0.0.0/0"]
 }
 
 resource "aws_security_group_rule" "master-egress" {

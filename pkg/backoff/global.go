@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 // globalBackoffMutex guards globalBackoff
@@ -37,7 +37,7 @@ const maxGlobalBackoff = 5 * time.Minute
 func DoGlobalBackoff(err error) {
 	pause := computeBackoff()
 
-	glog.Warningf("inserting rate-limiting pause of %v after error: %v", pause, err)
+	klog.Warningf("inserting rate-limiting pause of %v after error: %v", pause, err)
 	time.Sleep(pause)
 }
 

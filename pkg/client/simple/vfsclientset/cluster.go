@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,13 +22,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang/glog"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/klog"
 	api "k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/apis/kops/registry"
 	"k8s.io/kops/pkg/apis/kops/v1alpha1"
@@ -82,12 +83,12 @@ func (c *ClusterVFS) List(options metav1.ListOptions) (*api.ClusterList, error) 
 	for _, clusterName := range names {
 		cluster, err := c.find(clusterName)
 		if err != nil {
-			glog.Warningf("cluster %q found in state store listing, but cannot be loaded: %v", clusterName, err)
+			klog.Warningf("cluster %q found in state store listing, but cannot be loaded: %v", clusterName, err)
 			continue
 		}
 
 		if cluster == nil {
-			glog.Warningf("cluster %q found in state store listing, but doesn't exist now", clusterName)
+			klog.Warningf("cluster %q found in state store listing, but doesn't exist now", clusterName)
 			continue
 		}
 
@@ -138,6 +139,10 @@ func (r *ClusterVFS) Update(c *api.Cluster, status *api.ClusterStatus) (*api.Clu
 
 	if err := validation.ValidateClusterUpdate(c, status, old).ToAggregate(); err != nil {
 		return nil, err
+	}
+
+	if !apiequality.Semantic.DeepEqual(old.Spec, c.Spec) {
+		c.SetGeneration(old.GetGeneration() + 1)
 	}
 
 	if err := r.writeConfig(c, r.basePath.Join(clusterName, registry.PathCluster), c, vfs.WriteOptionOnlyIfExists); err != nil {
@@ -193,7 +198,7 @@ func (r *ClusterVFS) find(clusterName string) (*api.Cluster, error) {
 		c.ObjectMeta.Name = clusterName
 	}
 	if c.ObjectMeta.Name != clusterName {
-		glog.Warningf("Name of cluster does not match: %q vs %q", c.ObjectMeta.Name, clusterName)
+		klog.Warningf("Name of cluster does not match: actual name was %q, but cluster name was %q (using registry path %v).", c.ObjectMeta.Name, clusterName, registry.PathCluster)
 	}
 
 	// TODO: Split this out into real version updates / schema changes

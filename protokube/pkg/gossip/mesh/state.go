@@ -150,8 +150,10 @@ func (s *state) updateValues(removeKeys []string, putEntries map[string]string) 
 func (s *state) getData() *KVState {
 	s.mtx.RLock()
 	defer s.mtx.RUnlock()
-	d := &KVState{}
-	*d = s.data
+
+	// make a deep-copy. To avoid a bunch of reflection etc. this simply marshals and unmarshals
+	b, _ := proto.Marshal(&s.data)
+	d, _ := DecodeKVState(b)
 	return d
 }
 
@@ -159,10 +161,19 @@ func (s *state) merge(message *KVState, changes *KVState) {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	changed := mergeKVState(&s.data, message, changes)
+	var c KVState
+	if s.data.Records != nil {
+		c.Records = make(map[string]*KVStateRecord)
+		for k, v := range s.data.Records {
+			c.Records[k] = v
+		}
+	}
+
+	changed := mergeKVState(&c, message, changes)
 
 	if changed {
 		s.version++
+		s.data = c
 	}
 }
 

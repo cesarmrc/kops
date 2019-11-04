@@ -1,5 +1,5 @@
 /*
-Copyright 2014 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,31 +21,31 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/golang/glog"
 	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/klog"
 	"k8s.io/kops/cmd/kops/util"
 	kopsapi "k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/apis/kops/v1alpha1"
 	"k8s.io/kops/pkg/kopscodecs"
 	"k8s.io/kops/upup/pkg/fi/cloudup"
+	"k8s.io/kops/util/pkg/text"
 	"k8s.io/kops/util/pkg/vfs"
-	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/kubectl/genericclioptions/resource"
 	"k8s.io/kubernetes/pkg/kubectl/util/i18n"
+	"k8s.io/kubernetes/pkg/kubectl/util/templates"
 )
 
 type CreateOptions struct {
-	resource.FilenameOptions
+	Filenames []string
 }
 
 var (
 	createLong = templates.LongDesc(i18n.T(`
 		Create a resource:` + validResources +
 		`
-	Create a cluster, instancegroup or secret using command line parameters, 
+	Create a cluster, instancegroup or secret using command line parameters,
 	YAML configuration specification files, or stdin.
 	(Note: secrets cannot be created from YAML config files yet).
 	`))
@@ -87,7 +87,7 @@ func NewCmdCreate(f *util.Factory, out io.Writer) *cobra.Command {
 		Long:    createLong,
 		Example: createExample,
 		Run: func(cmd *cobra.Command, args []string) {
-			if cmdutil.IsFilenameSliceEmpty(options.Filenames) {
+			if len(options.Filenames) == 0 {
 				cmd.Help()
 				return
 			}
@@ -96,8 +96,6 @@ func NewCmdCreate(f *util.Factory, out io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().StringSliceVarP(&options.Filenames, "filename", "f", options.Filenames, "Filename to use to create the resource")
-	//usage := "to use to create the resource"
-	//cmdutil.AddFilenameOptionFlags(cmd, options, usage)
 	cmd.MarkFlagRequired("filename")
 	//cmdutil.AddValidateFlags(cmd)
 	//cmdutil.AddOutputFlagsForMutation(cmd)
@@ -118,11 +116,6 @@ func RunCreate(f *util.Factory, out io.Writer, c *CreateOptions) error {
 		return err
 	}
 
-	// Codecs provides access to encoding and decoding for the scheme
-	codecs := kopscodecs.Codecs //serializer.NewCodecFactory(scheme)
-
-	codec := codecs.UniversalDecoder(kopsapi.SchemeGroupVersion)
-
 	var clusterName = ""
 	//var cSpec = false
 	var sb bytes.Buffer
@@ -141,13 +134,13 @@ func RunCreate(f *util.Factory, out io.Writer, c *CreateOptions) error {
 			}
 		}
 		// TODO: this does not support a JSON array
-		sections := bytes.Split(bytes.Replace(contents, []byte("\r\n"), []byte("\n"), -1), []byte("\n---\n"))
+		sections := text.SplitContentToSections(contents)
 		for _, section := range sections {
 			defaults := &schema.GroupVersionKind{
 				Group:   v1alpha1.SchemeGroupVersion.Group,
 				Version: v1alpha1.SchemeGroupVersion.Version,
 			}
-			o, gvk, err := codec.Decode(section, defaults, nil)
+			o, gvk, err := kopscodecs.Decode(section, defaults)
 			if err != nil {
 				return fmt.Errorf("error parsing file %q: %v", f, err)
 			}
@@ -221,7 +214,7 @@ func RunCreate(f *util.Factory, out io.Writer, c *CreateOptions) error {
 				fmt.Fprintf(&sb, "Added ssh credential\n")
 
 			default:
-				glog.V(2).Infof("Type of object was %T", v)
+				klog.V(2).Infof("Type of object was %T", v)
 				return fmt.Errorf("Unhandled kind %q in %s", gvk, f)
 			}
 		}

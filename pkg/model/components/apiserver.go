@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/loader"
@@ -35,7 +35,7 @@ type KubeAPIServerOptionsBuilder struct {
 
 var _ loader.OptionsBuilder = &KubeAPIServerOptionsBuilder{}
 
-// BuildOptions is resposible for filling in the default settings for the kube apiserver
+// BuildOptions is responsible for filling in the default settings for the kube apiserver
 func (b *KubeAPIServerOptionsBuilder) BuildOptions(o interface{}) error {
 	clusterSpec := o.(*kops.ClusterSpec)
 	if clusterSpec.KubeAPIServer == nil {
@@ -142,7 +142,7 @@ func (b *KubeAPIServerOptionsBuilder) BuildOptions(o interface{}) error {
 		return nil
 	}
 
-	image, err := Image("kube-apiserver", clusterSpec, b.AssetBuilder)
+	image, err := Image("kube-apiserver", b.Architecture(), clusterSpec, b.AssetBuilder)
 	if err != nil {
 		return err
 	}
@@ -161,6 +161,8 @@ func (b *KubeAPIServerOptionsBuilder) BuildOptions(o interface{}) error {
 		// for baremetal, we don't specify a cloudprovider to apiserver
 	case kops.CloudProviderOpenstack:
 		c.CloudProvider = "openstack"
+	case kops.CloudProviderALI:
+		c.CloudProvider = "alicloud"
 	default:
 		return fmt.Errorf("unknown cloudprovider %q", clusterSpec.CloudProvider)
 	}
@@ -255,7 +257,7 @@ func (b *KubeAPIServerOptionsBuilder) BuildOptions(o interface{}) error {
 	}
 	// Based on recommendations from:
 	// https://kubernetes.io/docs/admin/admission-controllers/#is-there-a-recommended-set-of-admission-controllers-to-use
-	if b.IsKubernetesGTE("1.10") {
+	if b.IsKubernetesGTE("1.10") && b.IsKubernetesLT("1.12") {
 		c.EnableAdmissionPlugins = []string{
 			"Initializers",
 			"NamespaceLifecycle",
@@ -269,6 +271,24 @@ func (b *KubeAPIServerOptionsBuilder) BuildOptions(o interface{}) error {
 			"NodeRestriction",
 			"ResourceQuota",
 		}
+		c.EnableAdmissionPlugins = append(c.EnableAdmissionPlugins, c.AppendAdmissionPlugins...)
+	}
+	// Based on recommendations from:
+	// https://kubernetes.io/docs/admin/admission-controllers/#is-there-a-recommended-set-of-admission-controllers-to-use
+	if b.IsKubernetesGTE("1.12") {
+		c.EnableAdmissionPlugins = []string{
+			"NamespaceLifecycle",
+			"LimitRanger",
+			"ServiceAccount",
+			"PersistentVolumeLabel",
+			"DefaultStorageClass",
+			"DefaultTolerationSeconds",
+			"MutatingAdmissionWebhook",
+			"ValidatingAdmissionWebhook",
+			"NodeRestriction",
+			"ResourceQuota",
+		}
+		c.EnableAdmissionPlugins = append(c.EnableAdmissionPlugins, c.AppendAdmissionPlugins...)
 	}
 
 	// We make sure to disable AnonymousAuth from when it was introduced
@@ -282,7 +302,7 @@ func (b *KubeAPIServerOptionsBuilder) BuildOptions(o interface{}) error {
 	return nil
 }
 
-// buildAPIServerCount calculates the count of the api servers, essentuially the number of node marked as Master role
+// buildAPIServerCount calculates the count of the api servers, essentially the number of node marked as Master role
 func (b *KubeAPIServerOptionsBuilder) buildAPIServerCount(clusterSpec *kops.ClusterSpec) int {
 	// The --apiserver-count flag is (generally agreed) to be something we need to get rid of in k8s
 

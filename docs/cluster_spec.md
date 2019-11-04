@@ -52,7 +52,28 @@ You can use a valid SSL Certificate for your API Server Load Balancer. Currently
 spec:
   api:
     loadBalancer:
+      type: Public
       sslCertificate: arn:aws:acm:<region>:<accountId>:certificate/<uuid>
+```
+
+*Openstack only*
+As of Kops 1.12.0 it is possible to use the load balancer internally by setting the `useForInternalApi: true`.
+This will point both `masterPublicName` and `masterInternalName` to the load balancer. You can therefore set both of these to the same value in this configuration.
+
+```yaml
+spec:
+  api:
+    loadBalancer:
+      type: Internal
+      useForInternalApi: true
+```
+
+You can also set the API load balancer to be cross-zone:
+```yaml
+spec:
+  api:
+    loadBalancer:
+      crossZoneLoadBalancing: true
 ```
 
 ### etcdClusters v3 & tls
@@ -87,6 +108,8 @@ etcdClusters:
 
 By default, the Volumes created for the etcd clusters are `gp2` and 20GB each. The volume size, type and Iops( for `io1`) can be configured via their parameters. Conversion between `gp2` and `io1` is not supported, nor are size changes.
 
+As of Kops 1.12.0 it is also possible to specify the requests for your etcd cluster members using the `cpuRequest` and `memoryRequest` parameters.
+
 ```yaml
 etcdClusters:
 - etcdMembers:
@@ -103,6 +126,8 @@ etcdClusters:
     volumeIops: 100
     volumeSize: 21
   name: events
+  cpuRequest: 150m
+  memoryRequest: 512Mi
 ```
 
 ### sshAccess
@@ -154,6 +179,18 @@ spec:
     zone: us-east-1a
 ```
 
+In the case that you don't use NAT gateways or internet gateways, Kops 1.12.0 introduced the "External" flag for egress to force kops to ignore egress for the subnet. This can be useful when other tools are used to manage egress for the subnet such as virtual private gateways. Please note that your cluster may need to have access to the internet upon creation, so egress must be available upon initializing a cluster. This is intended for use when egress is managed external to kops, typically with an existing cluster.
+
+```
+spec:
+  subnets:
+  - cidr: 10.20.64.0/21
+    name: us-east-1a
+    egress: External
+    type: Private
+    zone: us-east-1a
+```
+
 #### publicIP
 The IP of an existing EIP that you would like to attach to the NAT gateway.
 
@@ -185,7 +222,8 @@ spec:
     oidcGroupsClaim: user_roles
     oidcGroupsPrefix: "oidc:"
     oidcCAFile: /etc/kubernetes/ssl/kc-ca.pem
-
+    oidcRequiredClaim:
+    	- "key=value"
 ```
 
 #### audit logging
@@ -288,6 +326,16 @@ spec:
     targetRamMb: 4096
 ```
 
+#### eventTTL
+
+How long API server retains events. Note that you must fill empty units of time with zeros.
+
+```yaml
+spec:
+  kubeAPIServer:
+    eventTTL: 03h0m0s
+```
+
 ### externalDns
 
 This block contains configuration options for your `external-DNS` provider.
@@ -315,6 +363,25 @@ NOTE: Where the corresponding configuration value can be empty, fields can be se
 
 Will result in the flag `--resolv-conf=` being built.
 
+#### Disable CPU CFS Quota
+To disable CPU CFS quota enforcement for containers that specify CPU limits (default true) we have to set the flag `--cpu-cfs-quota` to `false`
+on all the kubelets. We can specify that in the `kubelet` spec in our cluster.yml.
+
+```
+spec:
+  kubelet:
+    cpuCFSQuota: false
+```
+
+#### Configure CPU CFS Period
+Configure CPU CFS quota period value (cpu.cfs_period_us). Example:
+
+```
+spec:
+  kubelet:
+    cpuCFSQuotaPeriod: "100ms"
+```
+
 #### Enable Custom metrics support
 To use custom metrics in kubernetes as per [custom metrics doc](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#support-for-custom-metrics)
 we have to set the flag `--enable-custom-metrics` to `true` on all the kubelets. We can specify that in the `kubelet` spec in our cluster.yml.
@@ -323,6 +390,16 @@ we have to set the flag `--enable-custom-metrics` to `true` on all the kubelets.
 spec:
   kubelet:
     enableCustomMetrics: true
+```
+
+#### Setting kubelet CPU management policies
+Kops 1.12.0 added support for enabling cpu management policies in kubernetes as per [cpu management doc](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/#cpu-management-policies)
+we have to set the flag `--cpu-manager-policy` to the appropriate value on all the kubelets. This must be specified in the `kubelet` spec in our cluster.yml.
+
+```
+spec:
+  kubelet:
+    cpuManagerPolicy: static
 ```
 
 #### Setting kubelet configurations together with the Amazon VPC backend
@@ -340,6 +417,21 @@ spec:
 ...
   networking:
     amazonvpc: {}
+```
+
+#### Configure a Flex Volume plugin directory
+An optional flag can be provided within the KubeletSpec to set a volume plugin directory (must be accessible for read/write operations), which is additionally provided to the Controller Manager and mounted in accordingly.
+
+Kops will set this for you based off the Operating System in use:
+- ContainerOS: `/home/kubernetes/flexvolume/`
+- CoreOS: `/var/lib/kubelet/volumeplugins/`
+- Default (in-line with upstream k8s): `/usr/libexec/kubernetes/kubelet-plugins/volume/exec/`
+
+If you wish to override this value, it can be done so with the following addition to the kubelet spec:
+```yaml
+spec:
+  kubelet:
+    volumePluginDirectory: /provide/a/writable/path/here
 ```
 
 ### kubeScheduler
@@ -376,6 +468,44 @@ Specifying KubeDNS will install kube-dns as the default service discovery.
 
 This will install [CoreDNS](https://coredns.io/) instead of kube-dns.
 
+If you are using CoreDNS and want to use an entirely custom CoreFile you can do this by specifying the file. This will not work with any other options which interact with the default CoreFile. You can also override the version of the CoreDNS image used to use a different registry or version by specifying `CoreDNSImage`.
+
+**Note:** If you are using this functionality you will need to be extra vigiliant on version changes of CoreDNS for changes in functionality of the plugins being used etc.
+
+```yaml
+spec:
+  kubeDNS:
+    provider: CoreDNS
+    coreDNSImage: mirror.registry.local/mirrors/coredns:1.3.1
+    externalCoreFile: |
+      amazonaws.com:53 {
+            errors
+            log . {
+                class denial error
+            }
+            health :8084
+            prometheus :9153
+            proxy . 169.254.169.253 {
+            }
+            cache 30
+        }
+        .:53 {
+            errors
+            health :8080
+            autopath @kubernetes
+            kubernetes cluster.local {
+                pods verified
+                upstream 169.254.169.253
+                fallthrough in-addr.arpa ip6.arpa
+            }
+            prometheus :9153
+            proxy . 169.254.169.253
+            cache 300
+        }
+```
+
+**Note:** If you are upgrading to CoreDNS, kube-dns will be left in place and must be removed manually (you can scale the kube-dns and kube-dns-autoscaler deployments in the `kube-system` namespace to 0 as a starting point). The `kube-dns` Service itself should be left in place, as this retains the ClusterIP and eliminates the possibility of DNS outages in your cluster. If you would like to continue autoscaling, update the `kube-dns-autoscaler` Deployment container command for `--target=Deployment/kube-dns` to be `--target=Deployment/coredns`.
+
 ### kubeControllerManager
 This block contains configurations for the `controller-manager`.
 
@@ -384,8 +514,10 @@ spec:
   kubeControllerManager:
     horizontalPodAutoscalerSyncPeriod: 15s
     horizontalPodAutoscalerDownscaleDelay: 5m0s
+    horizontalPodAutoscalerDownscaleStabilization: 5m
     horizontalPodAutoscalerUpscaleDelay: 3m0s
     horizontalPodAutoscalerTolerance: 0.1
+    experimentalClusterSigningDuration: 8760h0m0s
 ```
 
 For more details on `horizontalPodAutoscaler` flags see the [official HPA docs](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) and the [Kops guides on how to set it up](horizontal_pod_autoscaling.md).
@@ -403,6 +535,21 @@ spec:
 Will result in the flag `--feature-gates=Accelerators=true,AllowExtTrafficLocalEndpoints=false`
 
 NOTE: Feature gate `ExperimentalCriticalPodAnnotation` is enabled by default because some critical components like `kube-proxy` depend on its presence.
+
+Some feature gates also require the `featureGates` setting to be used on other components - e.g. `PodShareProcessNamespace` requires
+the feature gate to be enabled on the api server:
+
+```yaml
+spec:
+  kubelet:
+    featureGates:
+      PodShareProcessNamespace: "true"
+  kubeAPIServer:
+    featureGates:
+      PodShareProcessNamespace: "true"
+```
+
+For more information, see the [feature gate documentation](https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/)
 
 ####  Compute Resources Reservation
 
@@ -597,6 +744,18 @@ spec:
     - https://registry.example.com
 ```
 
+#### Skip Install
+
+If you want nodeup to skip the Docker installation tasks, you can do so with:
+
+```yaml
+spec:
+  docker:
+    skipInstall: true
+``` 
+
+**NOTE:** When this field is set to `true`, it is entirely up to the user to install and configure Docker.
+
 #### storage
 
 The Docker [Storage Driver](https://docs.docker.com/engine/reference/commandline/dockerd/#daemon-storage-driver) can be specified in order to override the default. Be sure the driver you choose is supported by your operating system and docker version.
@@ -619,6 +778,34 @@ Providing the name of a key already in AWS is an alternative to `--ssh-public-ke
 spec:
   sshKeyName: myexistingkey
 ```
+
+### useHostCertificates
+
+Self-signed certificates towards Cloud APIs. In some cases Cloud APIs do have self-signed certificates.
+
+```yaml
+spec:
+  useHostCertificates: true
+```
+
+#### Optional step: add root certificates to instancegroups root ca bundle
+
+```yaml
+  additionalUserData:
+  - name: cacert.sh
+    type: text/x-shellscript
+    content: |
+      #!/bin/sh
+      cat > /usr/local/share/ca-certificates/mycert.crt <<EOF
+      -----BEGIN CERTIFICATE-----
+snip
+      -----END CERTIFICATE-----
+      EOF
+      update-ca-certificates
+```
+
+**NOTE**: `update-ca-certificates` is command for debian/ubuntu. That command is different depending your OS.
+
 
 ### target
 

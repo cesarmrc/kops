@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,12 +20,13 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strings"
 
-	"github.com/golang/glog"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/apis/kops/util"
 	"k8s.io/kops/pkg/cloudinstances"
@@ -66,6 +67,9 @@ func hasPlaceHolderIP(clusterName string) (bool, error) {
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		clientcmd.NewDefaultClientConfigLoadingRules(),
 		&clientcmd.ConfigOverrides{CurrentContext: clusterName}).ClientConfig()
+	if err != nil {
+		return false, fmt.Errorf("error building configuration: %v", err)
+	}
 
 	apiAddr, err := url.Parse(config.Host)
 	if err != nil {
@@ -185,14 +189,27 @@ func (v *ValidationCluster) collectPodFailures(client kubernetes.Interface) erro
 		if pod.Status.Phase == v1.PodSucceeded {
 			continue
 		}
-		for _, status := range pod.Status.ContainerStatuses {
-			if !status.Ready {
-				v.addError(&ValidationError{
-					Kind:    "Pod",
-					Name:    "kube-system/" + pod.Name,
-					Message: fmt.Sprintf("kube-system pod %q is not healthy", pod.Name),
-				})
+		if pod.Status.Phase == v1.PodPending {
+			v.addError(&ValidationError{
+				Kind:    "Pod",
+				Name:    "kube-system/" + pod.Name,
+				Message: fmt.Sprintf("kube-system pod %q is pending", pod.Name),
+			})
+			continue
+		}
+		var notready []string
+		for _, container := range pod.Status.ContainerStatuses {
+			if !container.Ready {
+				notready = append(notready, container.Name)
 			}
+		}
+		if len(notready) != 0 {
+			v.addError(&ValidationError{
+				Kind:    "Pod",
+				Name:    "kube-system/" + pod.Name,
+				Message: fmt.Sprintf("kube-system pod %q is not ready (%s)", pod.Name, strings.Join(notready, ",")),
+			})
+
 		}
 	}
 	return nil
@@ -271,7 +288,7 @@ func (v *ValidationCluster) validateNodes(cloudGroups map[string]*cloudinstances
 
 				v.Nodes = append(v.Nodes, n)
 			} else {
-				glog.Warningf("ignoring node with role %q", n.Role)
+				klog.Warningf("ignoring node with role %q", n.Role)
 			}
 		}
 	}

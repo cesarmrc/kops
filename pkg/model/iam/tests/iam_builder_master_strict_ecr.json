@@ -4,7 +4,9 @@
     {
       "Effect": "Allow",
       "Action": [
+        "ec2:DescribeAccountAttributes",
         "ec2:DescribeInstances",
+        "ec2:DescribeInternetGateways",
         "ec2:DescribeRegions",
         "ec2:DescribeRouteTables",
         "ec2:DescribeSecurityGroups",
@@ -55,7 +57,8 @@
       "Action": [
         "autoscaling:DescribeAutoScalingGroups",
         "autoscaling:DescribeLaunchConfigurations",
-        "autoscaling:DescribeTags"
+        "autoscaling:DescribeTags",
+        "ec2:DescribeLaunchTemplateVersions"
       ],
       "Resource": [
         "*"
